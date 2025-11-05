@@ -1,0 +1,147 @@
+name: Build ARM gRPC Client
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  GRPC_VERSION: "v1.60.0"
+  OUTPUT_BINARY: "ticket_client"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Cache gRPC
+        id: cache-grpc
+        uses: actions/cache@v3
+        with:
+          path: grpc-arm-install.tar.gz
+          key: grpc-${{ env.GRPC_VERSION }}-armv7-${{ hashFiles('.github/workflows/build-arm.yml') }}
+      
+      - name: Build gRPC (if not cached)
+        if: steps.cache-grpc.outputs.cache-hit != 'true'
+        run: |
+          docker run --rm \
+            -v $PWD:/work \
+            -w /work \
+            debian:bookworm \
+            bash -c '
+              set -e
+              
+              echo "=== Setup ARM cross-compile ==="
+              dpkg --add-architecture armhf
+              apt-get update -qq
+              apt-get install -y -qq \
+                gcc-arm-linux-gnueabihf \
+                g++-arm-linux-gnueabihf \
+                build-essential \
+                cmake \
+                git \
+                libssl-dev:armhf \
+                zlib1g-dev:armhf
+              
+              echo "=== Clone gRPC ==="
+              git clone --recurse-submodules -b ${{ env.GRPC_VERSION }} --depth 1 \
+                https://github.com/grpc/grpc /tmp/grpc
+              
+              echo "=== Build protoc (host) ==="
+              cd /tmp/grpc
+              mkdir -p cmake/build-host
+              cd cmake/build-host
+              cmake ../../third_party/protobuf \
+                -DCMAKE_BUILD_TYPE=Release \
+                -Dprotobuf_BUILD_TESTS=OFF
+              make -j$(nproc) protoc
+              cp protoc /usr/local/bin/
+              
+              echo "=== Build gRPC (ARM) ==="
+              cd /tmp/grpc
+              mkdir -p cmake/build-arm
+              cd cmake/build-arm
+              cmake ../.. \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_SYSTEM_NAME=Linux \
+                -DCMAKE_SYSTEM_PROCESSOR=arm \
+                -DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc \
+                -DCMAKE_CXX_COMPILER=arm-linux-gnueabihf-g++ \
+                -DOPENSSL_CRYPTO_LIBRARY=/usr/lib/arm-linux-gnueabihf/libcrypto.so \
+                -DOPENSSL_SSL_LIBRARY=/usr/lib/arm-linux-gnueabihf/libssl.so \
+                -DZLIB_LIBRARY=/usr/lib/arm-linux-gnueabihf/libz.so \
+                -DgRPC_INSTALL=ON \
+                -DgRPC_BUILD_TESTS=OFF \
+                -DgRPC_SSL_PROVIDER=package \
+                -DgRPC_ZLIB_PROVIDER=package \
+                -DCMAKE_INSTALL_PREFIX=/grpc-arm
+              make -j$(nproc)
+              make install
+              
+              echo "=== Package gRPC ==="
+              cd /
+              tar -czf /work/grpc-arm-install.tar.gz grpc-arm/ usr/local/bin/protoc
+              
+              echo "✓ gRPC build complete"
+            '
+      
+      - name: Build ticket_client
+        run: |
+          docker run --rm \
+            -v $PWD:/work \
+            -w /work \
+            debian:bookworm \
+            bash -c '
+              set -e
+              
+              echo "=== Setup ==="
+              apt-get update -qq
+              apt-get install -y -qq \
+                gcc-arm-linux-gnueabihf \
+                g++-arm-linux-gnueabihf \
+                file \
+                tar
+              
+              echo "=== Extract gRPC ==="
+              tar -xzf grpc-arm-install.tar.gz -C /
+              
+              echo "=== Generate proto code ==="
+              /usr/local/bin/protoc \
+                --cpp_out=. \
+                --grpc_out=. \
+                --plugin=protoc-gen-grpc=/grpc-arm/bin/grpc_cpp_plugin \
+                ticket_sync.proto
+              
+              ls -lh ticket_sync.pb.*
+              
+              echo "=== Compile ==="
+              arm-linux-gnueabihf-g++ \
+                -std=c++17 \
+                -static-libgcc \
+                -static-libstdc++ \
+                -O2 \
+                -o ${{ env.OUTPUT_BINARY }} \
+                ticket_client.cpp \
+                ticket_sync.pb.cc \
+                ticket_sync.grpc.pb.cc \
+                -I/grpc-arm/include \
+                -L/grpc-arm/lib \
+                -lgrpc++ -lgrpc -lprotobuf \
+                -lpthread -ldl -lm
+              
+              arm-linux-gnueabihf-strip ${{ env.OUTPUT_BINARY }}
+              
+              file ${{ env.OUTPUT_BINARY }}
+              ls -lh ${{ env.OUTPUT_BINARY }}
+            '
+      
+      - name: Upload Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.OUTPUT_BINARY }}
+          path: ${{ env.OUTPUT_BINARY }}

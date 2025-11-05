@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+
+option csharp_namespace = "KingICT.Galanthus.Vehicle.Grpc.Protos";
+package vehicle;
+
+message Ticket {
+    int64 id = 1;
+    bool active = 2;
+    google.protobuf.Timestamp date_created = 3;
+    google.protobuf.Int32Value account_id = 4;
+    string caption = 5;
+    google.protobuf.Timestamp valid_from = 6;
+    google.protobuf.Timestamp valid_to = 7;
+    google.protobuf.Int32Value traffic_zone = 8;
+    google.protobuf.Int32Value article_id = 9;
+    google.protobuf.Int32Value invoice_item_id = 10;
+    google.protobuf.StringValue token = 11;
+}
+
+message SubscribeForNewTicketsRequest {
+    int32 vehicle_id = 1;
+}
+
+message SubscribeForNewTicketsResponse {
+    Ticket new_ticket_created = 1;
+}
+
+service TicketSync {
+    rpc SubscribeForNewTickets (SubscribeForNewTicketsRequest) returns (stream SubscribeForNewTicketsResponse);
+}
