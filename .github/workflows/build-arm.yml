@@ -24,13 +24,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: grpc-arm.tar.gz
-          key: grpc-${{ env.GRPC_VERSION }}-arm-v8
+          key: grpc-${{ env.GRPC_VERSION }}-arm-v6
       
       - name: Build gRPC (if not cached)
         if: steps.cache-grpc.outputs.cache-hit != 'true'
         run: |
           echo "=== Building gRPC ${{ env.GRPC_VERSION }} for ARM ==="
           
+          # DON'T add armhf architecture - just install cross-compiler
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             gcc-arm-linux-gnueabihf \
@@ -39,53 +40,24 @@ jobs:
             cmake \
             git \
             ca-certificates \
-            wget \
-            curl
+            wget
           
-          # Download ARM packages - find latest available versions
-          echo "Downloading ARM libraries from Debian..."
+          # Download ARM SSL and zlib headers/libs manually
+          echo "Downloading ARM libraries..."
           mkdir -p /tmp/arm-deps
           cd /tmp/arm-deps
           
-          # Get the package list and find actual available versions
-          echo "Finding available OpenSSL packages..."
-          curl -s "http://ftp.debian.org/debian/pool/main/o/openssl/" | grep -oP 'libssl3.*armhf\.deb' | sort -V | tail -1 > ssl3.txt
-          curl -s "http://ftp.debian.org/debian/pool/main/o/openssl/" | grep -oP 'libssl-dev.*armhf\.deb' | sort -V | tail -1 > ssl-dev.txt
+          # Get Debian packages for ARM (using snapshot.debian.org for stability)
+          # Using November 2024 snapshot with OpenSSL 3.0.15
+          wget http://snapshot.debian.org/archive/debian/20241102T025604Z/pool/main/o/openssl/libssl-dev_3.0.15-1~deb12u1_armhf.deb
+          wget http://snapshot.debian.org/archive/debian/20241102T025604Z/pool/main/o/openssl/libssl3_3.0.15-1~deb12u1_armhf.deb
+          wget http://snapshot.debian.org/archive/debian/20241102T025604Z/pool/main/z/zlib/zlib1g-dev_1.2.13.dfsg-1_armhf.deb
+          wget http://snapshot.debian.org/archive/debian/20241102T025604Z/pool/main/z/zlib/zlib1g_1.2.13.dfsg-1_armhf.deb
           
-          SSL3_PKG=$(cat ssl3.txt)
-          SSLDEV_PKG=$(cat ssl-dev.txt)
-          
-          echo "Downloading: $SSL3_PKG"
-          wget "http://ftp.debian.org/debian/pool/main/o/openssl/${SSL3_PKG}"
-          
-          echo "Downloading: $SSLDEV_PKG"
-          wget "http://ftp.debian.org/debian/pool/main/o/openssl/${SSLDEV_PKG}"
-          
-          # Get zlib packages
-          echo "Finding available zlib packages..."
-          curl -s "http://ftp.debian.org/debian/pool/main/z/zlib/" | grep -oP 'zlib1g_.*armhf\.deb' | sort -V | tail -1 > zlib.txt
-          curl -s "http://ftp.debian.org/debian/pool/main/z/zlib/" | grep -oP 'zlib1g-dev.*armhf\.deb' | sort -V | tail -1 > zlib-dev.txt
-          
-          ZLIB_PKG=$(cat zlib.txt)
-          ZLIBDEV_PKG=$(cat zlib-dev.txt)
-          
-          echo "Downloading: $ZLIB_PKG"
-          wget "http://ftp.debian.org/debian/pool/main/z/zlib/${ZLIB_PKG}"
-          
-          echo "Downloading: $ZLIBDEV_PKG"
-          wget "http://ftp.debian.org/debian/pool/main/z/zlib/${ZLIBDEV_PKG}"
-          
-          # Extract all packages
-          echo "Extracting packages..."
-          sudo mkdir -p /usr/arm-linux-gnueabihf
+          # Extract to /usr/arm-linux-gnueabihf
           for deb in *.deb; do
-            echo "Extracting $deb"
-            sudo dpkg -x $deb /usr/arm-linux-gnueabihf/
+            dpkg -x $deb /usr/arm-linux-gnueabihf/
           done
-          
-          # Verify extraction
-          echo "Verifying extracted files..."
-          ls -lh /usr/arm-linux-gnueabihf/usr/lib/arm-linux-gnueabihf/ || true
           
           git clone --recurse-submodules -b ${{ env.GRPC_VERSION }} --depth 1 --shallow-submodules https://github.com/grpc/grpc /tmp/grpc
           
@@ -230,25 +202,72 @@ jobs:
             -L/grpc-arm/lib \
             -L/grpc-arm/lib-deps \
             -Wl,-rpath,/grpc-arm/lib-deps \
-            -lgrpc++ -lgrpc -lgpr -laddress_sorting -lupb -lprotobuf \
-            -labsl_log_internal_check_op -labsl_log_internal_message -labsl_log_internal_nullguard \
-            -labsl_examine_stack -labsl_log_internal_format -labsl_log_internal_proto \
-            -labsl_log_internal_log_sink_set -labsl_log_sink -labsl_log_entry \
-            -labsl_flags_internal -labsl_flags_reflection -labsl_flags_config \
-            -labsl_flags_program_name -labsl_flags_private_handle_accessor \
-            -labsl_flags_commandlineflag -labsl_flags_commandlineflag_internal \
-            -labsl_statusor -labsl_status -labsl_cord -labsl_cordz_info \
-            -labsl_cord_internal -labsl_cordz_functions -labsl_exponential_biased \
-            -labsl_cordz_handle -labsl_crc_cord_state -labsl_crc32c \
-            -labsl_crc_internal -labsl_crc_cpu_detect -labsl_raw_hash_set \
-            -labsl_hashtablez_sampler -labsl_synchronization -labsl_graphcycles_internal \
-            -labsl_kernel_timeout_internal -labsl_stacktrace -labsl_symbolize \
-            -labsl_debugging_internal -labsl_demangle_internal -labsl_malloc_internal \
-            -labsl_time -labsl_civil_time -labsl_time_zone -labsl_bad_optional_access \
-            -labsl_str_format_internal -labsl_strings -labsl_strings_internal \
-            -labsl_string_view -labsl_base -labsl_spinlock_wait -labsl_int128 \
-            -labsl_throw_delegate -labsl_raw_logging_internal -labsl_log_severity \
-            -lre2 -lz -lcares -lssl -lcrypto -lpthread -ldl -lm
+            -lgrpc++ \
+            -lgrpc \
+            -lgpr \
+            -laddress_sorting \
+            -lupb \
+            -lprotobuf \
+            -labsl_log_internal_check_op \
+            -labsl_log_internal_message \
+            -labsl_log_internal_nullguard \
+            -labsl_examine_stack \
+            -labsl_log_internal_format \
+            -labsl_log_internal_proto \
+            -labsl_log_internal_log_sink_set \
+            -labsl_log_sink \
+            -labsl_log_entry \
+            -labsl_flags_internal \
+            -labsl_flags_reflection \
+            -labsl_flags_config \
+            -labsl_flags_program_name \
+            -labsl_flags_private_handle_accessor \
+            -labsl_flags_commandlineflag \
+            -labsl_flags_commandlineflag_internal \
+            -labsl_statusor \
+            -labsl_status \
+            -labsl_cord \
+            -labsl_cordz_info \
+            -labsl_cord_internal \
+            -labsl_cordz_functions \
+            -labsl_exponential_biased \
+            -labsl_cordz_handle \
+            -labsl_crc_cord_state \
+            -labsl_crc32c \
+            -labsl_crc_internal \
+            -labsl_crc_cpu_detect \
+            -labsl_raw_hash_set \
+            -labsl_hashtablez_sampler \
+            -labsl_synchronization \
+            -labsl_graphcycles_internal \
+            -labsl_kernel_timeout_internal \
+            -labsl_stacktrace \
+            -labsl_symbolize \
+            -labsl_debugging_internal \
+            -labsl_demangle_internal \
+            -labsl_malloc_internal \
+            -labsl_time \
+            -labsl_civil_time \
+            -labsl_time_zone \
+            -labsl_bad_optional_access \
+            -labsl_str_format_internal \
+            -labsl_strings \
+            -labsl_strings_internal \
+            -labsl_string_view \
+            -labsl_base \
+            -labsl_spinlock_wait \
+            -labsl_int128 \
+            -labsl_throw_delegate \
+            -labsl_raw_logging_internal \
+            -labsl_log_severity \
+            -lre2 \
+            -lz \
+            -lcares \
+            -lssl \
+            -lcrypto \
+            -lpthread \
+            -ldl \
+            -lm
           
           arm-linux-gnueabihf-strip ${{ env.OUTPUT_BINARY }}
           
