@@ -2,146 +2,267 @@ name: Build ARM gRPC Client
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
 
 env:
-  GRPC_VERSION: "v1.60.0"
-  OUTPUT_BINARY: "ticket_client"
+  GRPC_VERSION: v1.60.0
+  OUTPUT_BINARY: ticket_client
 
 jobs:
-  build:
+  build-grpc:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Cache gRPC
+      - name: Cache gRPC build
         id: cache-grpc
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
-          path: grpc-arm-install.tar.gz
-          key: grpc-${{ env.GRPC_VERSION }}-armv7-${{ hashFiles('.github/workflows/build-arm.yml') }}
+          path: grpc-arm.tar.gz
+          key: grpc-${{ env.GRPC_VERSION }}-arm-v6
       
       - name: Build gRPC (if not cached)
         if: steps.cache-grpc.outputs.cache-hit != 'true'
         run: |
-          docker run --rm \
-            -v $PWD:/work \
-            -w /work \
-            debian:bookworm \
-            bash -c '
-              set -e
-              
-              echo "=== Setup ARM cross-compile ==="
-              dpkg --add-architecture armhf
-              apt-get update -qq
-              apt-get install -y -qq \
-                gcc-arm-linux-gnueabihf \
-                g++-arm-linux-gnueabihf \
-                build-essential \
-                cmake \
-                git \
-                libssl-dev:armhf \
-                zlib1g-dev:armhf
-              
-              echo "=== Clone gRPC ==="
-              git clone --recurse-submodules -b ${{ env.GRPC_VERSION }} --depth 1 \
-                https://github.com/grpc/grpc /tmp/grpc
-              
-              echo "=== Build protoc (host) ==="
-              cd /tmp/grpc
-              mkdir -p cmake/build-host
-              cd cmake/build-host
-              cmake ../../third_party/protobuf \
-                -DCMAKE_BUILD_TYPE=Release \
-                -Dprotobuf_BUILD_TESTS=OFF
-              make -j$(nproc) protoc
-              cp protoc /usr/local/bin/
-              
-              echo "=== Build gRPC (ARM) ==="
-              cd /tmp/grpc
-              mkdir -p cmake/build-arm
-              cd cmake/build-arm
-              cmake ../.. \
-                -DCMAKE_BUILD_TYPE=Release \
-                -DCMAKE_SYSTEM_NAME=Linux \
-                -DCMAKE_SYSTEM_PROCESSOR=arm \
-                -DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc \
-                -DCMAKE_CXX_COMPILER=arm-linux-gnueabihf-g++ \
-                -DOPENSSL_CRYPTO_LIBRARY=/usr/lib/arm-linux-gnueabihf/libcrypto.so \
-                -DOPENSSL_SSL_LIBRARY=/usr/lib/arm-linux-gnueabihf/libssl.so \
-                -DZLIB_LIBRARY=/usr/lib/arm-linux-gnueabihf/libz.so \
-                -DgRPC_INSTALL=ON \
-                -DgRPC_BUILD_TESTS=OFF \
-                -DgRPC_SSL_PROVIDER=package \
-                -DgRPC_ZLIB_PROVIDER=package \
-                -DCMAKE_INSTALL_PREFIX=/grpc-arm
-              make -j$(nproc)
-              make install
-              
-              echo "=== Package gRPC ==="
-              cd /
-              tar -czf /work/grpc-arm-install.tar.gz grpc-arm/ usr/local/bin/protoc
-              
-              echo "✓ gRPC build complete"
-            '
+          echo "=== Building gRPC ${{ env.GRPC_VERSION }} for ARM ==="
+          
+          sudo dpkg --add-architecture armhf
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            gcc-arm-linux-gnueabihf \
+            g++-arm-linux-gnueabihf \
+            build-essential \
+            cmake \
+            git \
+            ca-certificates \
+            libssl-dev:armhf \
+            zlib1g-dev:armhf
+          
+          git clone --recurse-submodules -b ${{ env.GRPC_VERSION }} --depth 1 --shallow-submodules https://github.com/grpc/grpc /tmp/grpc
+          
+          # Build protoc for host
+          echo "Building protoc for HOST..."
+          mkdir -p /tmp/grpc/cmake/build-host
+          cd /tmp/grpc/cmake/build-host
+          cmake ../../third_party/protobuf \
+            -DCMAKE_BUILD_TYPE=Release \
+            -Dprotobuf_BUILD_TESTS=OFF \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DCMAKE_INSTALL_PREFIX=/usr/local
+          make -j$(nproc) protoc
+          sudo make install
+          
+          # Build grpc_cpp_plugin for host
+          echo "Building grpc_cpp_plugin for HOST..."
+          mkdir -p /tmp/grpc/cmake/build-plugin
+          cd /tmp/grpc/cmake/build-plugin
+          cmake ../.. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DgRPC_BUILD_TESTS=OFF \
+            -DgRPC_BUILD_CODEGEN=ON \
+            -DgRPC_BUILD_GRPC_CPP_PLUGIN=ON
+          make -j$(nproc) grpc_cpp_plugin
+          sudo cp grpc_cpp_plugin /usr/local/bin/
+          
+          # Build gRPC for ARM
+          echo "Building gRPC for ARM..."
+          mkdir -p /tmp/grpc/cmake/build-arm
+          cd /tmp/grpc/cmake/build-arm
+          cmake ../.. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=arm \
+            -DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc \
+            -DCMAKE_CXX_COMPILER=arm-linux-gnueabihf-g++ \
+            -DCMAKE_FIND_ROOT_PATH=/usr/arm-linux-gnueabihf \
+            -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
+            -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
+            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
+            -DgRPC_CPP_PLUGIN=/usr/local/bin/grpc_cpp_plugin \
+            -DOPENSSL_ROOT_DIR=/usr/lib/arm-linux-gnueabihf \
+            -DOPENSSL_CRYPTO_LIBRARY=/usr/lib/arm-linux-gnueabihf/libcrypto.so \
+            -DOPENSSL_SSL_LIBRARY=/usr/lib/arm-linux-gnueabihf/libssl.so \
+            -DOPENSSL_INCLUDE_DIR=/usr/include \
+            -DZLIB_LIBRARY=/usr/lib/arm-linux-gnueabihf/libz.so \
+            -DZLIB_INCLUDE_DIR=/usr/include \
+            -DgRPC_INSTALL=ON \
+            -DgRPC_BUILD_TESTS=OFF \
+            -DgRPC_SSL_PROVIDER=package \
+            -DgRPC_ZLIB_PROVIDER=package \
+            -DCMAKE_INSTALL_PREFIX=/grpc-arm \
+            -DCMAKE_CXX_FLAGS="-march=armv7-a -mfpu=neon"
+          make -j$(nproc)
+          sudo make install
+          
+          sudo mkdir -p /grpc-arm/lib-deps
+          sudo cp -L /usr/lib/arm-linux-gnueabihf/libssl.so.* /grpc-arm/lib-deps/ || true
+          sudo cp -L /usr/lib/arm-linux-gnueabihf/libcrypto.so.* /grpc-arm/lib-deps/ || true
+          sudo cp -L /usr/lib/arm-linux-gnueabihf/libz.so.* /grpc-arm/lib-deps/ || true
+          
+          cd /
+          sudo tar -czf grpc-arm.tar.gz grpc-arm/ usr/local/bin/protoc usr/local/bin/grpc_cpp_plugin usr/local/include/google/
+          sudo mv grpc-arm.tar.gz ${{ github.workspace }}/
+          ls -lh ${{ github.workspace }}/grpc-arm.tar.gz
       
-      - name: Build ticket_client
-        run: |
-          docker run --rm \
-            -v $PWD:/work \
-            -w /work \
-            debian:bookworm \
-            bash -c '
-              set -e
-              
-              echo "=== Setup ==="
-              apt-get update -qq
-              apt-get install -y -qq \
-                gcc-arm-linux-gnueabihf \
-                g++-arm-linux-gnueabihf \
-                file \
-                tar
-              
-              echo "=== Extract gRPC ==="
-              tar -xzf grpc-arm-install.tar.gz -C /
-              
-              echo "=== Generate proto code ==="
-              /usr/local/bin/protoc \
-                --cpp_out=. \
-                --grpc_out=. \
-                --plugin=protoc-gen-grpc=/grpc-arm/bin/grpc_cpp_plugin \
-                ticket_sync.proto
-              
-              ls -lh ticket_sync.pb.*
-              
-              echo "=== Compile ==="
-              arm-linux-gnueabihf-g++ \
-                -std=c++17 \
-                -static-libgcc \
-                -static-libstdc++ \
-                -O2 \
-                -o ${{ env.OUTPUT_BINARY }} \
-                ticket_client.cpp \
-                ticket_sync.pb.cc \
-                ticket_sync.grpc.pb.cc \
-                -I/grpc-arm/include \
-                -L/grpc-arm/lib \
-                -lgrpc++ -lgrpc -lprotobuf \
-                -lpthread -ldl -lm
-              
-              arm-linux-gnueabihf-strip ${{ env.OUTPUT_BINARY }}
-              
-              file ${{ env.OUTPUT_BINARY }}
-              ls -lh ${{ env.OUTPUT_BINARY }}
-            '
-      
-      - name: Upload Binary
+      - name: Upload gRPC artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.OUTPUT_BINARY }}
+          name: grpc-arm-build
+          path: grpc-arm.tar.gz
+          retention-days: 30
+
+  build-client:
+    runs-on: ubuntu-latest
+    needs: build-grpc
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Download gRPC artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: grpc-arm-build
+      
+      - name: Setup ARM compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            gcc-arm-linux-gnueabihf \
+            g++-arm-linux-gnueabihf \
+            file
+      
+      - name: Extract and verify gRPC
+        run: |
+          echo "Extracting gRPC..."
+          sudo tar -xzf grpc-arm.tar.gz -C /
+          
+          echo "Checking extracted files..."
+          ls -lh /grpc-arm/bin/ | head -15
+          
+          echo "Testing protoc (symlink should work on Linux)..."
+          /grpc-arm/bin/protoc --version || echo "Symlink failed, trying direct binary..."
+          
+          echo "Using protoc-25.0.0 directly as fallback..."
+          /grpc-arm/bin/protoc-25.0.0 --version
+      
+      - name: Build client
+        run: |
+          # Use the actual binary, not the symlink (more reliable)
+          PROTOC_BIN="/grpc-arm/bin/protoc-25.0.0"
+          GRPC_PLUGIN="/grpc-arm/bin/grpc_cpp_plugin"
+          
+          echo "Generating proto code..."
+          $PROTOC_BIN \
+            -I/grpc-arm/include \
+            -I/usr/local/include \
+            -I. \
+            --cpp_out=. \
+            --grpc_out=. \
+            --plugin=protoc-gen-grpc=$GRPC_PLUGIN \
+            ticket_sync.proto
+          
+          echo "Generated files:"
+          ls -lh ticket_sync.pb.* ticket_sync.grpc.pb.*
+          
+          echo "Compiling ARM binary..."
+          arm-linux-gnueabihf-g++ \
+            -std=c++17 \
+            -static-libgcc \
+            -static-libstdc++ \
+            -march=armv7-a \
+            -mfpu=neon \
+            -O2 \
+            -o ${{ env.OUTPUT_BINARY }} \
+            ticket_client.cpp \
+            ticket_sync.pb.cc \
+            ticket_sync.grpc.pb.cc \
+            -I/grpc-arm/include \
+            -I/usr/local/include \
+            -L/grpc-arm/lib \
+            -L/grpc-arm/lib-deps \
+            -Wl,-rpath,/grpc-arm/lib-deps \
+            -lgrpc++ \
+            -lgrpc \
+            -lgpr \
+            -laddress_sorting \
+            -lupb \
+            -lprotobuf \
+            -labsl_log_internal_check_op \
+            -labsl_log_internal_message \
+            -labsl_log_internal_nullguard \
+            -labsl_examine_stack \
+            -labsl_log_internal_format \
+            -labsl_log_internal_proto \
+            -labsl_log_internal_log_sink_set \
+            -labsl_log_sink \
+            -labsl_log_entry \
+            -labsl_flags_internal \
+            -labsl_flags_reflection \
+            -labsl_flags_config \
+            -labsl_flags_program_name \
+            -labsl_flags_private_handle_accessor \
+            -labsl_flags_commandlineflag \
+            -labsl_flags_commandlineflag_internal \
+            -labsl_statusor \
+            -labsl_status \
+            -labsl_cord \
+            -labsl_cordz_info \
+            -labsl_cord_internal \
+            -labsl_cordz_functions \
+            -labsl_exponential_biased \
+            -labsl_cordz_handle \
+            -labsl_crc_cord_state \
+            -labsl_crc32c \
+            -labsl_crc_internal \
+            -labsl_crc_cpu_detect \
+            -labsl_raw_hash_set \
+            -labsl_hashtablez_sampler \
+            -labsl_synchronization \
+            -labsl_graphcycles_internal \
+            -labsl_kernel_timeout_internal \
+            -labsl_stacktrace \
+            -labsl_symbolize \
+            -labsl_debugging_internal \
+            -labsl_demangle_internal \
+            -labsl_malloc_internal \
+            -labsl_time \
+            -labsl_civil_time \
+            -labsl_time_zone \
+            -labsl_bad_optional_access \
+            -labsl_str_format_internal \
+            -labsl_strings \
+            -labsl_strings_internal \
+            -labsl_string_view \
+            -labsl_base \
+            -labsl_spinlock_wait \
+            -labsl_int128 \
+            -labsl_throw_delegate \
+            -labsl_raw_logging_internal \
+            -labsl_log_severity \
+            -lre2 \
+            -lz \
+            -lcares \
+            -lssl \
+            -lcrypto \
+            -lpthread \
+            -ldl \
+            -lm
+          
+          arm-linux-gnueabihf-strip ${{ env.OUTPUT_BINARY }}
+          
+          echo "✓ Build complete!"
+          file ${{ env.OUTPUT_BINARY }}
+          ls -lh ${{ env.OUTPUT_BINARY }}
+      
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ticket_client-arm
           path: ${{ env.OUTPUT_BINARY }}
+          retention-days: 7
