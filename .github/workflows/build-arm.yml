@@ -31,7 +31,7 @@ jobs:
         run: |
           echo "=== Building gRPC ${{ env.GRPC_VERSION }} for ARM ==="
           
-          sudo dpkg --add-architecture armhf
+          # DON'T add armhf architecture - just install cross-compiler
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             gcc-arm-linux-gnueabihf \
@@ -40,8 +40,23 @@ jobs:
             cmake \
             git \
             ca-certificates \
-            libssl-dev:armhf \
-            zlib1g-dev:armhf
+            wget
+          
+          # Download ARM SSL and zlib headers/libs manually
+          echo "Downloading ARM libraries..."
+          mkdir -p /tmp/arm-deps
+          cd /tmp/arm-deps
+          
+          # Get Debian packages for ARM (these always work)
+          wget http://ftp.debian.org/debian/pool/main/o/openssl/libssl-dev_3.0.11-1~deb12u2_armhf.deb
+          wget http://ftp.debian.org/debian/pool/main/o/openssl/libssl3_3.0.11-1~deb12u2_armhf.deb
+          wget http://ftp.debian.org/debian/pool/main/z/zlib/zlib1g-dev_1.2.13.dfsg-1_armhf.deb
+          wget http://ftp.debian.org/debian/pool/main/z/zlib/zlib1g_1.2.13.dfsg-1_armhf.deb
+          
+          # Extract to /usr/arm-linux-gnueabihf
+          for deb in *.deb; do
+            dpkg -x $deb /usr/arm-linux-gnueabihf/
+          done
           
           git clone --recurse-submodules -b ${{ env.GRPC_VERSION }} --depth 1 --shallow-submodules https://github.com/grpc/grpc /tmp/grpc
           
@@ -84,12 +99,12 @@ jobs:
             -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
             -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
             -DgRPC_CPP_PLUGIN=/usr/local/bin/grpc_cpp_plugin \
-            -DOPENSSL_ROOT_DIR=/usr/lib/arm-linux-gnueabihf \
-            -DOPENSSL_CRYPTO_LIBRARY=/usr/lib/arm-linux-gnueabihf/libcrypto.so \
-            -DOPENSSL_SSL_LIBRARY=/usr/lib/arm-linux-gnueabihf/libssl.so \
-            -DOPENSSL_INCLUDE_DIR=/usr/include \
-            -DZLIB_LIBRARY=/usr/lib/arm-linux-gnueabihf/libz.so \
-            -DZLIB_INCLUDE_DIR=/usr/include \
+            -DOPENSSL_ROOT_DIR=/usr/arm-linux-gnueabihf/usr \
+            -DOPENSSL_CRYPTO_LIBRARY=/usr/arm-linux-gnueabihf/usr/lib/arm-linux-gnueabihf/libcrypto.so \
+            -DOPENSSL_SSL_LIBRARY=/usr/arm-linux-gnueabihf/usr/lib/arm-linux-gnueabihf/libssl.so \
+            -DOPENSSL_INCLUDE_DIR=/usr/arm-linux-gnueabihf/usr/include \
+            -DZLIB_LIBRARY=/usr/arm-linux-gnueabihf/usr/lib/arm-linux-gnueabihf/libz.so \
+            -DZLIB_INCLUDE_DIR=/usr/arm-linux-gnueabihf/usr/include \
             -DgRPC_INSTALL=ON \
             -DgRPC_BUILD_TESTS=OFF \
             -DgRPC_SSL_PROVIDER=package \
@@ -99,15 +114,18 @@ jobs:
           make -j$(nproc)
           sudo make install
           
+          # Copy runtime dependencies
           sudo mkdir -p /grpc-arm/lib-deps
-          sudo cp -L /usr/lib/arm-linux-gnueabihf/libssl.so.* /grpc-arm/lib-deps/ || true
-          sudo cp -L /usr/lib/arm-linux-gnueabihf/libcrypto.so.* /grpc-arm/lib-deps/ || true
-          sudo cp -L /usr/lib/arm-linux-gnueabihf/libz.so.* /grpc-arm/lib-deps/ || true
+          sudo cp -L /usr/arm-linux-gnueabihf/usr/lib/arm-linux-gnueabihf/libssl.so.* /grpc-arm/lib-deps/ || true
+          sudo cp -L /usr/arm-linux-gnueabihf/usr/lib/arm-linux-gnueabihf/libcrypto.so.* /grpc-arm/lib-deps/ || true
+          sudo cp -L /usr/arm-linux-gnueabihf/usr/lib/arm-linux-gnueabihf/libz.so.* /grpc-arm/lib-deps/ || true
           
           cd /
           sudo tar -czf grpc-arm.tar.gz grpc-arm/ usr/local/bin/protoc usr/local/bin/grpc_cpp_plugin usr/local/include/google/
           sudo mv grpc-arm.tar.gz ${{ github.workspace }}/
           ls -lh ${{ github.workspace }}/grpc-arm.tar.gz
+          
+          echo "✓ gRPC build complete"
       
       - name: Upload gRPC artifact
         uses: actions/upload-artifact@v4
@@ -145,15 +163,11 @@ jobs:
           echo "Checking extracted files..."
           ls -lh /grpc-arm/bin/ | head -15
           
-          echo "Testing protoc (symlink should work on Linux)..."
-          /grpc-arm/bin/protoc --version || echo "Symlink failed, trying direct binary..."
-          
-          echo "Using protoc-25.0.0 directly as fallback..."
+          echo "Testing protoc..."
           /grpc-arm/bin/protoc-25.0.0 --version
       
       - name: Build client
         run: |
-          # Use the actual binary, not the symlink (more reliable)
           PROTOC_BIN="/grpc-arm/bin/protoc-25.0.0"
           GRPC_PLUGIN="/grpc-arm/bin/grpc_cpp_plugin"
           
