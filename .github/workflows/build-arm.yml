@@ -55,8 +55,9 @@ jobs:
           wget http://snapshot.debian.org/archive/debian/20241102T025604Z/pool/main/z/zlib/zlib1g_1.2.13.dfsg-1_armhf.deb
           
           # Extract to /usr/arm-linux-gnueabihf
+          sudo mkdir -p /usr/arm-linux-gnueabihf
           for deb in *.deb; do
-            dpkg -x $deb /usr/arm-linux-gnueabihf/
+            sudo dpkg -x $deb /usr/arm-linux-gnueabihf/
           done
           
           git clone --recurse-submodules -b ${{ env.GRPC_VERSION }} --depth 1 --shallow-submodules https://github.com/grpc/grpc /tmp/grpc
