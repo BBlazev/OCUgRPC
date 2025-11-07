@@ -24,13 +24,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: grpc-arm.tar.gz
-          key: grpc-${{ env.GRPC_VERSION }}-arm-v7
+          key: grpc-${{ env.GRPC_VERSION }}-arm-v6
       
       - name: Build gRPC (if not cached)
         if: steps.cache-grpc.outputs.cache-hit != 'true'
         run: |
           echo "=== Building gRPC ${{ env.GRPC_VERSION }} for ARM ==="
           
+          # DON'T add armhf architecture - just install cross-compiler
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             gcc-arm-linux-gnueabihf \
@@ -41,25 +42,21 @@ jobs:
             ca-certificates \
             wget
           
-          # Download ARM SSL and zlib packages from Debian
+          # Download ARM SSL and zlib headers/libs manually
           echo "Downloading ARM libraries..."
           mkdir -p /tmp/arm-deps
           cd /tmp/arm-deps
           
-          # Correct Debian package URLs for bookworm (Debian 12)
-          wget http://ftp.debian.org/debian/pool/main/o/openssl/libssl3_3.0.13-1~deb12u1_armhf.deb
-          wget http://ftp.debian.org/debian/pool/main/o/openssl/libssl-dev_3.0.13-1~deb12u1_armhf.deb
-          wget http://ftp.debian.org/debian/pool/main/z/zlib/zlib1g_1.2.13.dfsg-1_armhf.deb
-          wget http://ftp.debian.org/debian/pool/main/z/zlib/zlib1g-dev_1.2.13.dfsg-1_armhf.deb
+          # Get Debian packages for ARM (using snapshot.debian.org for stability)
+          wget http://snapshot.debian.org/archive/debian/20241101T084451Z/pool/main/o/openssl/libssl-dev_3.0.15-1~deb12u1_armhf.deb
+          wget http://snapshot.debian.org/archive/debian/20241101T084451Z/pool/main/o/openssl/libssl3t64_3.0.15-1~deb12u1_armhf.deb
+          wget http://snapshot.debian.org/archive/debian/20241101T084451Z/pool/main/z/zlib/zlib1g-dev_1.3.dfsg-3.1_armhf.deb
+          wget http://snapshot.debian.org/archive/debian/20241101T084451Z/pool/main/z/zlib/zlib1g_1.3.dfsg-3.1_armhf.deb
           
           # Extract to /usr/arm-linux-gnueabihf
-          sudo mkdir -p /usr/arm-linux-gnueabihf
           for deb in *.deb; do
-            sudo dpkg -x $deb /usr/arm-linux-gnueabihf/
+            dpkg -x $deb /usr/arm-linux-gnueabihf/
           done
-          
-          # Verify extraction
-          ls -lh /usr/arm-linux-gnueabihf/usr/lib/arm-linux-gnueabihf/ || true
           
           git clone --recurse-submodules -b ${{ env.GRPC_VERSION }} --depth 1 --shallow-submodules https://github.com/grpc/grpc /tmp/grpc
           
