@@ -59,15 +59,11 @@ jobs:
           
           echo "=== Building gRPC ${{ env.GRPC_VERSION }} static for ${{ matrix.arch }} ==="
           
-          # Clone gRPC with submodules
           git clone --recurse-submodules -b ${{ env.GRPC_VERSION }} --depth 1 \
             https://github.com/grpc/grpc /tmp/grpc
           
           cd /tmp/grpc
           
-          # ============================================
-          # STEP 1: Build host tools first (protoc and plugin)
-          # ============================================
           echo "Building host tools..."
           mkdir -p cmake/build-host
           cd cmake/build-host
@@ -82,24 +78,17 @@ jobs:
             -DgRPC_BUILD_GRPC_PYTHON_PLUGIN=OFF \
             -DgRPC_BUILD_GRPC_RUBY_PLUGIN=OFF
           
-          # Build only what we need for host
           ninja protoc grpc_cpp_plugin
           
-          # Save host tools with absolute paths
           mkdir -p ${{ github.workspace }}/grpc-host-tools
           cp third_party/protobuf/protoc ${{ github.workspace }}/grpc-host-tools/
           cp grpc_cpp_plugin ${{ github.workspace }}/grpc-host-tools/
           chmod +x ${{ github.workspace }}/grpc-host-tools/*
 
-          # ============================================
-          # STEP 1.5: Copy standard .proto includes (FIX)
-          # ============================================
           echo "Copying standard protobuf includes..."
           mkdir -p ${{ github.workspace }}/grpc-host-tools/include
-          # Copy the 'google' directory which contains all standard protos
           cp -r /tmp/grpc/third_party/protobuf/src/google ${{ github.workspace }}/grpc-host-tools/include/
           
-          # Get absolute paths for the tools
           PROTOC_PATH=$(realpath ${{ github.workspace }}/grpc-host-tools/protoc)
           GRPC_CPP_PLUGIN_PATH=$(realpath ${{ github.workspace }}/grpc-host-tools/grpc_cpp_plugin)
           
@@ -108,15 +97,11 @@ jobs:
           echo "  grpc_cpp_plugin: ${GRPC_CPP_PLUGIN_PATH}"
           ls -la ${{ github.workspace }}/grpc-host-tools/
           
-          # ============================================
-          # STEP 2: Build static libraries for ARM
-          # ============================================
           echo "Building static libraries for ${{ matrix.arch }}..."
           cd /tmp/grpc
           mkdir -p cmake/build-arm
           cd cmake/build-arm
           
-          # Create toolchain file for cross-compilation
           cat > toolchain.cmake << 'EOF'
           set(CMAKE_SYSTEM_NAME Linux)
           set(CMAKE_SYSTEM_PROCESSOR ${{ matrix.cmake_arch }})
@@ -131,8 +116,6 @@ jobs:
           set(CMAKE_CXX_FLAGS "${{ matrix.flags }} -fPIC")
           EOF
           
-          # Configure with all dependencies built from source
-          # CRITICAL: Set the plugin paths explicitly
           cmake ../.. \
             -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE=toolchain.cmake \
@@ -161,7 +144,6 @@ jobs:
             -DCMAKE_CXX_FLAGS="${{ matrix.flags }} -fPIC" \
             -DCMAKE_C_FLAGS="${{ matrix.flags }} -fPIC"
           
-          # Build and install
           ninja
           ninja install
           
@@ -172,12 +154,10 @@ jobs:
         run: |
           echo "Generating protobuf/gRPC code..."
           
-          # Ensure host tools are executable
           chmod +x ${{ github.workspace }}/grpc-host-tools/*
           
-          # Use host tools to generate code
           ${{ github.workspace }}/grpc-host-tools/protoc \
-            -I. \ # FIX: Add current directory so 'ticket_sync.proto' can be found
+            -I. \
             -I${{ github.workspace }}/grpc-host-tools/include \
             --cpp_out=. \
             --grpc_out=. \
@@ -191,10 +171,8 @@ jobs:
         run: |
           echo "Building static binary for ${{ matrix.arch }}..."
           
-          # Set paths
           GRPC_INSTALL="${{ github.workspace }}/grpc-install-${{ matrix.arch }}"
           
-          # Compile source files to object files first
           ${{ matrix.cross_compile }}-g++ \
             -std=c++14 \
             ${{ matrix.flags }} \
@@ -219,10 +197,8 @@ jobs:
             -I${GRPC_INSTALL}/include \
             -c ticket_sync.grpc.pb.cc -o ticket_sync.grpc.o
           
-          # Get all abseil libraries in correct order
           ABSL_LIBS=$(find ${GRPC_INSTALL}/lib -name "libabsl_*.a" | sort | xargs -n1 basename | sed 's/^lib/-l/' | sed 's/\.a$//' | tr '\n' ' ')
           
-          # Link statically with all libraries
           ${{ matrix.cross_compile }}-g++ \
             -static \
             ${{ matrix.flags }} \
@@ -259,12 +235,10 @@ jobs:
             -static-libgcc \
             -static-libstdc++
           
-          # Strip the binary to reduce size
           ${{ matrix.cross_compile }}-strip ${{ env.OUTPUT_BINARY }}-${{ matrix.arch }}
           
           echo "✓ Build complete!"
           
-          # Verify it's truly static
           echo "Binary information:"
           file ${{ env.OUTPUT_BINARY }}-${{ matrix.arch }}
           ls -lh ${{ env.OUTPUT_BINARY }}-${{ matrix.arch }}
