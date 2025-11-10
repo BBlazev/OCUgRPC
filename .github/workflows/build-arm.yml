@@ -90,6 +90,14 @@ jobs:
           cp third_party/protobuf/protoc ${{ github.workspace }}/grpc-host-tools/
           cp grpc_cpp_plugin ${{ github.workspace }}/grpc-host-tools/
           chmod +x ${{ github.workspace }}/grpc-host-tools/*
+
+          # ============================================
+          # STEP 1.5: Copy standard .proto includes (FIX)
+          # ============================================
+          echo "Copying standard protobuf includes..."
+          mkdir -p ${{ github.workspace }}/grpc-host-tools/include
+          # Copy the 'google' directory which contains all standard protos
+          cp -r /tmp/grpc/third_party/protobuf/src/google ${{ github.workspace }}/grpc-host-tools/include/
           
           # Get absolute paths for the tools
           PROTOC_PATH=$(realpath ${{ github.workspace }}/grpc-host-tools/protoc)
@@ -169,6 +177,7 @@ jobs:
           
           # Use host tools to generate code
           ${{ github.workspace }}/grpc-host-tools/protoc \
+            -I${{ github.workspace }}/grpc-host-tools/include \
             --cpp_out=. \
             --grpc_out=. \
             --plugin=protoc-gen-grpc=${{ github.workspace }}/grpc-host-tools/grpc_cpp_plugin \
