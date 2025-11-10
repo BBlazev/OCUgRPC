@@ -174,7 +174,7 @@ jobs:
           GRPC_INSTALL="${{ github.workspace }}/grpc-install-${{ matrix.arch }}"
           
           ${{ matrix.cross_compile }}-g++ \
-            -std=c++14 \
+            -std=c++20 \
             ${{ matrix.flags }} \
             -O2 \
             -fPIC \
@@ -182,7 +182,7 @@ jobs:
             -c ticket_client.cpp -o ticket_client.o
           
           ${{ matrix.cross_compile }}-g++ \
-            -std=c++14 \
+            -std=c++20 \
             ${{ matrix.flags }} \
             -O2 \
             -fPIC \
@@ -190,7 +190,7 @@ jobs:
             -c ticket_sync.pb.cc -o ticket_sync.pb.o
           
           ${{ matrix.cross_compile }}-g++ \
-            -std=c++14 \
+            -std=c++20 \
             ${{ matrix.flags }} \
             -O2 \
             -fPIC \
