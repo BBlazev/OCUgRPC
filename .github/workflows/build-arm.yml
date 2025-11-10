@@ -177,6 +177,7 @@ jobs:
           
           # Use host tools to generate code
           ${{ github.workspace }}/grpc-host-tools/protoc \
+            -I. \ # FIX: Add current directory so 'ticket_sync.proto' can be found
             -I${{ github.workspace }}/grpc-host-tools/include \
             --cpp_out=. \
             --grpc_out=. \
