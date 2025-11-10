@@ -211,9 +211,6 @@ jobs:
             -I${GRPC_INSTALL}/include \
             -c ticket_sync.grpc.pb.cc -o ticket_sync.grpc.o
           
-          # Collect all Abseil libraries
-          ABSL_LIBS=$(find ${GRPC_INSTALL}/lib -name "libabsl_*.a" | sort | xargs -n1 basename | sed 's/^lib/-l/' | sed 's/\.a$//' | tr '\n' ' ')
-          
           # Collect all upb libraries that actually exist
           UPB_LIBS=""
           for lib in upb_json_lib upb_textformat_lib upb_collections_lib upb_message_lib upb_base_lib upb_mem_lib utf8_range_lib utf8_validity utf8_range upb; do
@@ -224,7 +221,7 @@ jobs:
           
           echo "Using UPB libraries: ${UPB_LIBS}"
           
-          # Link the binary
+          # Link the binary - use --whole-archive for absl to handle circular dependencies
           ${{ matrix.cross_compile }}-g++ \
             -static \
             ${{ matrix.flags }} \
@@ -237,6 +234,7 @@ jobs:
             -Wl,--whole-archive \
             -lgrpc++ \
             -lgrpc \
+            $(find ${GRPC_INSTALL}/lib -name "libabsl_*.a" | xargs -n1 basename | sed 's/^lib/-l/' | sed 's/\.a$//' | tr '\n' ' ') \
             -Wl,--no-whole-archive \
             -lprotobuf \
             -lgpr \
@@ -247,7 +245,6 @@ jobs:
             -lcares \
             -lssl \
             -lcrypto \
-            ${ABSL_LIBS} \
             -lpthread \
             -lm \
             -ldl \
