@@ -37,7 +37,7 @@ jobs:
           path: |
             grpc-install-${{ matrix.arch }}
             grpc-host-tools
-          key: grpc-${{ env.GRPC_VERSION }}-${{ matrix.arch }}-static-v3
+          key: grpc-${{ env.GRPC_VERSION }}-${{ matrix.arch }}-static-v4
       
       - name: Install build tools
         run: |
@@ -148,7 +148,8 @@ jobs:
           ninja install
           
           echo "✓ gRPC build complete for ${{ matrix.arch }}"
-          ls -lh ${{ github.workspace }}/grpc-install-${{ matrix.arch }}/lib/ | head -20
+          echo "Installed libraries:"
+          ls -lh ${{ github.workspace }}/grpc-install-${{ matrix.arch }}/lib/ | head -30
       
       - name: Generate protobuf code
         run: |
@@ -197,8 +198,10 @@ jobs:
             -I${GRPC_INSTALL}/include \
             -c ticket_sync.grpc.pb.cc -o ticket_sync.grpc.o
           
+          # Collect all Abseil libraries
           ABSL_LIBS=$(find ${GRPC_INSTALL}/lib -name "libabsl_*.a" | sort | xargs -n1 basename | sed 's/^lib/-l/' | sed 's/\.a$//' | tr '\n' ' ')
           
+          # Link the binary with corrected upb library names
           ${{ matrix.cross_compile }}-g++ \
             -static \
             ${{ matrix.flags }} \
@@ -215,13 +218,10 @@ jobs:
             -lprotobuf \
             -lgpr \
             -laddress_sorting \
-            -lupb_json_lib \
-            -lupb_textformat_lib \
-            -lupb_collections_lib \
-            -lutf8_range_lib \
-            -lupb_message_lib \
-            -lupb_base_lib \
-            -lupb_mem_lib \
+            -lupb_json \
+            -lupb_textformat \
+            -lupb \
+            -lutf8_range \
             -lre2 \
             -lz \
             -lcares \
