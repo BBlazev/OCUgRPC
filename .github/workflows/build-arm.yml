@@ -37,7 +37,7 @@ jobs:
           path: |
             grpc-install-${{ matrix.arch }}
             grpc-host-tools
-          key: grpc-${{ env.GRPC_VERSION }}-${{ matrix.arch }}-static-v4
+          key: grpc-${{ env.GRPC_VERSION }}-${{ matrix.arch }}-static-v5
       
       - name: Install build tools
         run: |
@@ -149,7 +149,15 @@ jobs:
           
           echo "✓ gRPC build complete for ${{ matrix.arch }}"
           echo "Installed libraries:"
-          ls -lh ${{ github.workspace }}/grpc-install-${{ matrix.arch }}/lib/ | head -30
+          ls -lh ${{ github.workspace }}/grpc-install-${{ matrix.arch }}/lib/ | head -40
+          
+          echo ""
+          echo "UPB-related libraries:"
+          ls -1 ${{ github.workspace }}/grpc-install-${{ matrix.arch }}/lib/ | grep -i upb || echo "No upb libraries found"
+          
+          echo ""
+          echo "UTF8-related libraries:"
+          ls -1 ${{ github.workspace }}/grpc-install-${{ matrix.arch }}/lib/ | grep -i utf8 || echo "No utf8 libraries found"
       
       - name: Generate protobuf code
         run: |
@@ -167,6 +175,11 @@ jobs:
           
           echo "Generated files:"
           ls -lh *.pb.* *.grpc.pb.*
+      
+      - name: Inspect available libraries
+        run: |
+          echo "=== All static libraries in grpc-install ==="
+          ls -1 ${{ github.workspace }}/grpc-install-${{ matrix.arch }}/lib/*.a | xargs -n1 basename
       
       - name: Build static client binary
         run: |
@@ -201,7 +214,17 @@ jobs:
           # Collect all Abseil libraries
           ABSL_LIBS=$(find ${GRPC_INSTALL}/lib -name "libabsl_*.a" | sort | xargs -n1 basename | sed 's/^lib/-l/' | sed 's/\.a$//' | tr '\n' ' ')
           
-          # Link the binary with corrected upb library names
+          # Collect all upb libraries that actually exist
+          UPB_LIBS=""
+          for lib in upb_json_lib upb_textformat_lib upb_collections_lib upb_message_lib upb_base_lib upb_mem_lib utf8_range_lib utf8_validity utf8_range upb; do
+            if [ -f "${GRPC_INSTALL}/lib/lib${lib}.a" ]; then
+              UPB_LIBS="${UPB_LIBS} -l${lib}"
+            fi
+          done
+          
+          echo "Using UPB libraries: ${UPB_LIBS}"
+          
+          # Link the binary
           ${{ matrix.cross_compile }}-g++ \
             -static \
             ${{ matrix.flags }} \
@@ -218,10 +241,7 @@ jobs:
             -lprotobuf \
             -lgpr \
             -laddress_sorting \
-            -lupb_json \
-            -lupb_textformat \
-            -lupb \
-            -lutf8_range \
+            ${UPB_LIBS} \
             -lre2 \
             -lz \
             -lcares \
