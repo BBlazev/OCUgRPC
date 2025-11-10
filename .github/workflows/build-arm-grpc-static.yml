@@ -21,10 +21,6 @@ jobs:
             cross_compile: arm-linux-gnueabihf
             cmake_arch: arm
             flags: "-march=armv7-a -mfpu=neon"
-          - arch: aarch64
-            cross_compile: aarch64-linux-gnu  
-            cmake_arch: aarch64
-            flags: "-march=armv8-a"
     
     steps:
       - name: Checkout code
@@ -297,28 +293,26 @@ jobs:
           tag_name: v${{ github.run_number }}
           name: Release Build #${{ github.run_number }}
           body: |
-            ## gRPC Ticket Client - Static ARM Binaries
+            ## gRPC Ticket Client - Static ARM Binary
             
-            ### Available Binaries:
+            ### Available Binary:
             - `ticket_client-armv7` - For ARMv7 devices (32-bit)
-            - `ticket_client-aarch64` - For ARM64 devices (64-bit)
             
             ### Usage:
             ```bash
-            chmod +x ticket_client-{arch}
-            ./ticket_client-{arch} <server:port> <vehicle_id>
+            chmod +x ticket_client-armv7
+            ./ticket_client-armv7 <server:port> <vehicle_id>
             ```
             
             ### Features:
             - Fully static binary (no external dependencies required)
             - Built with gRPC ${{ env.GRPC_VERSION }}
-            - Optimized for ARM processors
+            - Optimized for ARMv7 processors with NEON
             
-            These binaries will work on any ARM Linux system without requiring any libraries to be installed.
+            This binary will work on any ARMv7 Linux system without requiring any libraries to be installed.
           draft: false
           prerelease: false
           files: |
             artifacts/ticket_client-armv7/ticket_client-armv7
-            artifacts/ticket_client-aarch64/ticket_client-aarch64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
