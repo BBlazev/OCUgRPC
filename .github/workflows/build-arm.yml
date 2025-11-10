@@ -37,7 +37,7 @@ jobs:
           path: |
             grpc-install-${{ matrix.arch }}
             grpc-host-tools
-          key: grpc-${{ env.GRPC_VERSION }}-${{ matrix.arch }}-static-v2
+          key: grpc-${{ env.GRPC_VERSION }}-${{ matrix.arch }}-static-v3
       
       - name: Install build tools
         run: |
@@ -66,7 +66,7 @@ jobs:
           cd /tmp/grpc
           
           # ============================================
-          # Build host tools first (protoc and plugin)
+          # STEP 1: Build host tools first (protoc and plugin)
           # ============================================
           echo "Building host tools..."
           mkdir -p cmake/build-host
@@ -76,19 +76,32 @@ jobs:
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DgRPC_BUILD_TESTS=OFF \
-            -DgRPC_BUILD_CSHARP_EXT=OFF
+            -DgRPC_BUILD_CSHARP_EXT=OFF \
+            -DgRPC_BUILD_GRPC_NODE_PLUGIN=OFF \
+            -DgRPC_BUILD_GRPC_PHP_PLUGIN=OFF \
+            -DgRPC_BUILD_GRPC_PYTHON_PLUGIN=OFF \
+            -DgRPC_BUILD_GRPC_RUBY_PLUGIN=OFF
           
           # Build only what we need for host
           ninja protoc grpc_cpp_plugin
           
-          # Save host tools
+          # Save host tools with absolute paths
           mkdir -p ${{ github.workspace }}/grpc-host-tools
           cp third_party/protobuf/protoc ${{ github.workspace }}/grpc-host-tools/
           cp grpc_cpp_plugin ${{ github.workspace }}/grpc-host-tools/
           chmod +x ${{ github.workspace }}/grpc-host-tools/*
           
+          # Get absolute paths for the tools
+          PROTOC_PATH=$(realpath ${{ github.workspace }}/grpc-host-tools/protoc)
+          GRPC_CPP_PLUGIN_PATH=$(realpath ${{ github.workspace }}/grpc-host-tools/grpc_cpp_plugin)
+          
+          echo "Host tools built:"
+          echo "  protoc: ${PROTOC_PATH}"
+          echo "  grpc_cpp_plugin: ${GRPC_CPP_PLUGIN_PATH}"
+          ls -la ${{ github.workspace }}/grpc-host-tools/
+          
           # ============================================
-          # Build static libraries for ARM
+          # STEP 2: Build static libraries for ARM
           # ============================================
           echo "Building static libraries for ${{ matrix.arch }}..."
           cd /tmp/grpc
@@ -111,6 +124,7 @@ jobs:
           EOF
           
           # Configure with all dependencies built from source
+          # CRITICAL: Set the plugin paths explicitly
           cmake ../.. \
             -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE=toolchain.cmake \
@@ -124,6 +138,9 @@ jobs:
             -DgRPC_BUILD_GRPC_PHP_PLUGIN=OFF \
             -DgRPC_BUILD_GRPC_PYTHON_PLUGIN=OFF \
             -DgRPC_BUILD_GRPC_RUBY_PLUGIN=OFF \
+            -DgRPC_BUILD_CODEGEN=OFF \
+            -DProtobuf_PROTOC_EXECUTABLE=${PROTOC_PATH} \
+            -DgRPC_CPP_PLUGIN_EXECUTABLE=${GRPC_CPP_PLUGIN_PATH} \
             -DgRPC_PROTOBUF_PROVIDER=module \
             -DgRPC_ZLIB_PROVIDER=module \
             -DgRPC_CARES_PROVIDER=module \
@@ -146,6 +163,9 @@ jobs:
       - name: Generate protobuf code
         run: |
           echo "Generating protobuf/gRPC code..."
+          
+          # Ensure host tools are executable
+          chmod +x ${{ github.workspace }}/grpc-host-tools/*
           
           # Use host tools to generate code
           ${{ github.workspace }}/grpc-host-tools/protoc \
@@ -189,8 +209,10 @@ jobs:
             -I${GRPC_INSTALL}/include \
             -c ticket_sync.grpc.pb.cc -o ticket_sync.grpc.o
           
+          # Get all abseil libraries in correct order
+          ABSL_LIBS=$(find ${GRPC_INSTALL}/lib -name "libabsl_*.a" | sort | xargs -n1 basename | sed 's/^lib/-l/' | sed 's/\.a$//' | tr '\n' ' ')
+          
           # Link statically with all libraries
-          # Using --whole-archive for gRPC libraries to ensure all symbols are included
           ${{ matrix.cross_compile }}-g++ \
             -static \
             ${{ matrix.flags }} \
@@ -219,89 +241,7 @@ jobs:
             -lcares \
             -lssl \
             -lcrypto \
-            -labsl_log_internal_check_op \
-            -labsl_log_internal_conditions \
-            -labsl_log_internal_message \
-            -labsl_log_internal_nullguard \
-            -labsl_log_internal_proto \
-            -labsl_log_internal_format \
-            -labsl_log_internal_log_sink_set \
-            -labsl_log_internal_globals \
-            -labsl_log_internal_fnmatch \
-            -labsl_log_sink \
-            -labsl_log_entry \
-            -labsl_log_initialize \
-            -labsl_log_globals \
-            -labsl_log_severity \
-            -labsl_vlog_config_internal \
-            -labsl_log_flags \
-            -labsl_flags \
-            -labsl_flags_internal \
-            -labsl_flags_reflection \
-            -labsl_flags_marshalling \
-            -labsl_flags_commandlineflag \
-            -labsl_flags_commandlineflag_internal \
-            -labsl_flags_config \
-            -labsl_flags_program_name \
-            -labsl_flags_private_handle_accessor \
-            -labsl_flags_parse \
-            -labsl_flags_usage \
-            -labsl_flags_usage_internal \
-            -labsl_examine_stack \
-            -labsl_failure_signal_handler \
-            -labsl_debugging_internal \
-            -labsl_demangle_internal \
-            -labsl_leak_check \
-            -labsl_debugging \
-            -labsl_stacktrace \
-            -labsl_symbolize \
-            -labsl_statusor \
-            -labsl_status \
-            -labsl_cord \
-            -labsl_cordz_info \
-            -labsl_cord_internal \
-            -labsl_cordz_functions \
-            -labsl_exponential_biased \
-            -labsl_cordz_handle \
-            -labsl_crc_cord_state \
-            -labsl_crc32c \
-            -labsl_crc_internal \
-            -labsl_crc_cpu_detect \
-            -labsl_raw_hash_set \
-            -labsl_hashtablez_sampler \
-            -labsl_hash \
-            -labsl_city \
-            -labsl_low_level_hash \
-            -labsl_random_distributions \
-            -labsl_random_seed_sequences \
-            -labsl_random_internal_pool_urbg \
-            -labsl_random_internal_randen \
-            -labsl_random_internal_randen_hwaes \
-            -labsl_random_internal_randen_hwaes_impl \
-            -labsl_random_internal_randen_slow \
-            -labsl_random_internal_platform \
-            -labsl_random_internal_seed_material \
-            -labsl_random_seed_gen_exception \
-            -labsl_bad_optional_access \
-            -labsl_bad_variant_access \
-            -labsl_synchronization \
-            -labsl_graphcycles_internal \
-            -labsl_kernel_timeout_internal \
-            -labsl_time \
-            -labsl_civil_time \
-            -labsl_time_zone \
-            -labsl_str_format_internal \
-            -labsl_strings \
-            -labsl_strings_internal \
-            -labsl_string_view \
-            -labsl_base \
-            -labsl_spinlock_wait \
-            -labsl_int128 \
-            -labsl_throw_delegate \
-            -labsl_raw_logging_internal \
-            -labsl_malloc_internal \
-            -labsl_die_if_null \
-            -labsl_strerror \
+            ${ABSL_LIBS} \
             -lpthread \
             -lm \
             -ldl \
