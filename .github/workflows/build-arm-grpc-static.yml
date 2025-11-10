@@ -274,6 +274,8 @@ jobs:
   create-release:
     needs: build-static-arm
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     
     steps:
