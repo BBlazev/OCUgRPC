@@ -33,7 +33,7 @@ jobs:
           path: |
             grpc-install-${{ matrix.arch }}
             grpc-host-tools
-          key: grpc-${{ env.GRPC_VERSION }}-${{ matrix.arch }}-static-v6
+          key: grpc-${{ env.GRPC_VERSION }}-${{ matrix.arch }}-static-v7
       
       - name: Install build tools
         run: |
@@ -156,18 +156,43 @@ jobs:
           echo "UTF8-related libraries:"
           ls -1 ${{ github.workspace }}/grpc-install-${{ matrix.arch }}/lib/ | grep -i utf8 || echo "No utf8 libraries found"
       
+      - name: Verify cached gRPC (if cached)
+        if: steps.cache-grpc.outputs.cache-hit == 'true'
+        run: |
+          echo "✓ Using cached gRPC build"
+          echo "Cached directories:"
+          ls -la grpc-install-${{ matrix.arch }}/ || echo "grpc-install directory not found"
+          ls -la grpc-host-tools/ || echo "grpc-host-tools directory not found"
+          
+          echo "Checking installed libraries:"
+          ls -1 grpc-install-${{ matrix.arch }}/lib/*.a 2>/dev/null | wc -l | xargs echo "Number of static libraries:"
+          
+          echo "Checking host tools:"
+          ls -la grpc-host-tools/ 2>/dev/null || echo "No host tools found"
+
       - name: Generate protobuf code
         run: |
           echo "Generating protobuf/gRPC code..."
           
-          chmod +x ${{ github.workspace }}/grpc-host-tools/*
+          # Make sure grpc-host-tools exists and is executable
+          if [ -d "grpc-host-tools" ]; then
+            chmod +x grpc-host-tools/*
+            PROTOC="./grpc-host-tools/protoc"
+            GRPC_PLUGIN="./grpc-host-tools/grpc_cpp_plugin"
+            INCLUDE_PATH="./grpc-host-tools/include"
+          else
+            echo "Using system protoc (cached tools not available)"
+            PROTOC="protoc"
+            GRPC_PLUGIN="grpc_cpp_plugin"
+            INCLUDE_PATH="/usr/include"
+          fi
           
-          ${{ github.workspace }}/grpc-host-tools/protoc \
+          $PROTOC \
             -I. \
-            -I${{ github.workspace }}/grpc-host-tools/include \
+            -I$INCLUDE_PATH \
             --cpp_out=. \
             --grpc_out=. \
-            --plugin=protoc-gen-grpc=${{ github.workspace }}/grpc-host-tools/grpc_cpp_plugin \
+            --plugin=protoc-gen-grpc=$GRPC_PLUGIN \
             ticket_sync.proto
           
           echo "Generated files:"
@@ -177,19 +202,35 @@ jobs:
         run: |
           echo "Fixing compiler warnings..."
           # Fix nodiscard warnings by adding (void) casts
-          sed -i 's/log_purchase(article_id, card_number, quantity, false);/(void)log_purchase(article_id, card_number, quantity, false);/g' sender.cpp
-          echo "Fixed nodiscard warnings in sender.cpp"
+          if [ -f "sender.cpp" ]; then
+            sed -i 's/log_purchase(article_id, card_number, quantity, false);/(void)log_purchase(article_id, card_number, quantity, false);/g' sender.cpp
+            echo "Fixed nodiscard warnings in sender.cpp"
+          else
+            echo "sender.cpp not found, skipping warning fix"
+          fi
       
       - name: Inspect available libraries
         run: |
           echo "=== All static libraries in grpc-install ==="
-          ls -1 ${{ github.workspace }}/grpc-install-${{ matrix.arch }}/lib/*.a | xargs -n1 basename
+          if [ -d "grpc-install-${{ matrix.arch }}" ]; then
+            ls -1 grpc-install-${{ matrix.arch }}/lib/*.a | xargs -n1 basename
+          else
+            echo "grpc-install directory not found!"
+          fi
       
       - name: Build static main application binary
         run: |
           echo "Building static binary for ${{ matrix.arch }}..."
           
-          GRPC_INSTALL="${{ github.workspace }}/grpc-install-${{ matrix.arch }}"
+          # Set GRPC_INSTALL path - use cached one if available
+          if [ -d "grpc-install-${{ matrix.arch }}" ]; then
+            GRPC_INSTALL="${{ github.workspace }}/grpc-install-${{ matrix.arch }}"
+            echo "Using cached gRPC installation at: ${GRPC_INSTALL}"
+          else
+            echo "ERROR: grpc-install directory not found!"
+            exit 1
+          fi
+          
           C_CXX_FLAGS="-std=c++20 ${{ matrix.flags }} -O2 -fPIC -I${GRPC_INSTALL}/include -Iinclude -Wno-unused-result -Wno-cpp"
           
           # 1. Compile all application source files to object files
@@ -222,7 +263,7 @@ jobs:
           ABSL_LIBS=$(find ${GRPC_INSTALL}/lib -name "libabsl_*.a" | xargs -n1 basename | sed 's/^lib/-l/' | sed 's/\.a$//' | tr '\n' ' ')
           echo "Using ABSL libraries: ${ABSL_LIBS}"
           
-          # 3. Link the final binary - without inline comments that break the command
+          # 3. Link the final binary
           echo "Linking final binary..."
           ${{ matrix.cross_compile }}-g++ \
             -static \
