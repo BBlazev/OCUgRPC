@@ -222,7 +222,7 @@ namespace Tickets
                      << sqlite3_errmsg(db_.get()) << '\n';
         }
         
-        std::cout << "TICKET INSERTED":
+        
 
 
         sqlite3_finalize(stmt);
