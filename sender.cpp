@@ -237,7 +237,8 @@ void Session::process_request(std::string_view request)
                     << ", hash=" << hash 
                     << ", validator_id=" << validator_id << "\n";
             
-        } else 
+        } 
+        else 
         {
             std::cout << "Invalid QR format \n";
             do_write("Invalid QR format");
@@ -257,6 +258,7 @@ void Session::process_request(std::string_view request)
         return;
 
     }
+
 
     bool is_card = !trimmed.empty() && std::all_of(trimmed.begin(), trimmed.end(), 
                        [](char c) { return std::isdigit(c) || std::isalpha(c); });
@@ -366,7 +368,7 @@ void Session::handle_fetch_articles()
     }
 }
 
-// void Session::handle_card_validation(std::string_view card_number)
+void Session::handle_card_validation(std::string_view card_number)
 {
     auto coupon_id = find_coupon_by_card(card_number);
     
