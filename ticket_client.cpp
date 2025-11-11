@@ -139,7 +139,7 @@ void signal_handler(int signal)
 // Main function
 int main(int argc, char** argv)
 {
-    std::string server_address = "localhost:5109";
+    std::string server_address = "localhost:5109";  // Default server address
     
     if (argc >= 2) {
         server_address = argv[1];
