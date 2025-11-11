@@ -194,8 +194,8 @@ jobs:
           ${{ matrix.cross_compile }}-g++ ${C_CXX_FLAGS} -c fetcher.cpp -o fetcher.o
           ${{ matrix.cross_compile }}-g++ ${C_CXX_FLAGS} -c coupons.cpp -o coupons.o
           ${{ matrix.cross_compile }}-g++ ${C_CXX_FLAGS} -c articles.cpp -o articles.o
-          # Also compile the C-based library files that are part of the project
-          ${{ matrix.cross_compile }}-gcc ${C_CXX_FLAGS} -c sqlite3.c -o sqlite3.o
+          # Compile SQLite3 from include directory
+          ${{ matrix.cross_compile }}-gcc -O2 -fPIC -c include/sqlite3.c -o sqlite3.o
 
           # Compile generated Protobuf files
           ${{ matrix.cross_compile }}-g++ ${C_CXX_FLAGS} -c ticket_sync.pb.cc -o ticket_sync.pb.o
