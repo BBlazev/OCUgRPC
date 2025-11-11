@@ -9,7 +9,8 @@ on:
 
 env:
   GRPC_VERSION: v1.60.0
-  OUTPUT_BINARY: ticket_client
+  # Changed the output name to reflect the main service binary
+  OUTPUT_BINARY: ocu_service
 
 jobs:
   build-static-arm:
@@ -89,8 +90,8 @@ jobs:
           GRPC_CPP_PLUGIN_PATH=$(realpath ${{ github.workspace }}/grpc-host-tools/grpc_cpp_plugin)
           
           echo "Host tools built:"
-          echo "  protoc: ${PROTOC_PATH}"
-          echo "  grpc_cpp_plugin: ${GRPC_CPP_PLUGIN_PATH}"
+          echo "  protoc: ${PROTOC_PATH}"
+          echo "  grpc_cpp_plugin: ${GRPC_CPP_PLUGIN_PATH}"
           ls -la ${{ github.workspace }}/grpc-host-tools/
           
           echo "Building static libraries for ${{ matrix.arch }}..."
@@ -177,37 +178,30 @@ jobs:
           echo "=== All static libraries in grpc-install ==="
           ls -1 ${{ github.workspace }}/grpc-install-${{ matrix.arch }}/lib/*.a | xargs -n1 basename
       
-      - name: Build static client binary
+      - name: Build static main application binary
         run: |
           echo "Building static binary for ${{ matrix.arch }}..."
           
           GRPC_INSTALL="${{ github.workspace }}/grpc-install-${{ matrix.arch }}"
+          C_CXX_FLAGS="-std=c++20 ${{ matrix.flags }} -O2 -fPIC -I${GRPC_INSTALL}/include -Iinclude"
           
-          ${{ matrix.cross_compile }}-g++ \
-            -std=c++20 \
-            ${{ matrix.flags }} \
-            -O2 \
-            -fPIC \
-            -I${GRPC_INSTALL}/include \
-            -c ticket_client.cpp -o ticket_client.o
+          # 1. Compile all application source files to object files
+          echo "Compiling application sources..."
+          ${{ matrix.cross_compile }}-g++ ${C_CXX_FLAGS} -c main.cpp -o main.o
+          ${{ matrix.cross_compile }}-g++ ${C_CXX_FLAGS} -c sender.cpp -o sender.o
+          ${{ matrix.cross_compile }}-g++ ${C_CXX_FLAGS} -c ticket_manager.cpp -o ticket_manager.o
+          ${{ matrix.cross_compile }}-g++ ${C_CXX_FLAGS} -c database.cpp -o database.o
+          ${{ matrix.cross_compile }}-g++ ${C_CXX_FLAGS} -c fetcher.cpp -o fetcher.o
+          ${{ matrix.cross_compile }}-g++ ${C_CXX_FLAGS} -c coupons.cpp -o coupons.o
+          ${{ matrix.cross_compile }}-g++ ${C_CXX_FLAGS} -c articles.cpp -o articles.o
+          # Also compile the C-based library files that are part of the project
+          ${{ matrix.cross_compile }}-gcc ${C_CXX_FLAGS} -c sqlite3.c -o sqlite3.o
+
+          # Compile generated Protobuf files
+          ${{ matrix.cross_compile }}-g++ ${C_CXX_FLAGS} -c ticket_sync.pb.cc -o ticket_sync.pb.o
+          ${{ matrix.cross_compile }}-g++ ${C_CXX_FLAGS} -c ticket_sync.grpc.pb.cc -o ticket_sync.grpc.o
           
-          ${{ matrix.cross_compile }}-g++ \
-            -std=c++20 \
-            ${{ matrix.flags }} \
-            -O2 \
-            -fPIC \
-            -I${GRPC_INSTALL}/include \
-            -c ticket_sync.pb.cc -o ticket_sync.pb.o
-          
-          ${{ matrix.cross_compile }}-g++ \
-            -std=c++20 \
-            ${{ matrix.flags }} \
-            -O2 \
-            -fPIC \
-            -I${GRPC_INSTALL}/include \
-            -c ticket_sync.grpc.pb.cc -o ticket_sync.grpc.o
-          
-          # Collect all upb libraries that actually exist
+          # 2. Collect all upb/utf8 libraries
           UPB_LIBS=""
           for lib in upb_json_lib upb_textformat_lib upb_collections_lib upb_message_lib upb_base_lib upb_mem_lib utf8_range_lib utf8_validity utf8_range upb; do
             if [ -f "${GRPC_INSTALL}/lib/lib${lib}.a" ]; then
@@ -217,19 +211,30 @@ jobs:
           
           echo "Using UPB libraries: ${UPB_LIBS}"
           
-          # Link the binary - use --whole-archive for absl to handle circular dependencies
+          # 3. Link the final binary
+          echo "Linking final binary..."
           ${{ matrix.cross_compile }}-g++ \
             -static \
             ${{ matrix.flags }} \
             -O2 \
             -o ${{ env.OUTPUT_BINARY }}-${{ matrix.arch }} \
-            ticket_client.o \
+            # Application Object Files
+            main.o \
+            sender.o \
+            ticket_manager.o \
+            database.o \
+            fetcher.o \
+            coupons.o \
+            articles.o \
+            sqlite3.o \
+            # Protobuf Object Files
             ticket_sync.pb.o \
             ticket_sync.grpc.o \
             -L${GRPC_INSTALL}/lib \
             -Wl,--whole-archive \
             -lgrpc++ \
             -lgrpc \
+            # Include all absl libraries required by gRPC
             $(find ${GRPC_INSTALL}/lib -name "libabsl_*.a" | xargs -n1 basename | sed 's/^lib/-l/' | sed 's/\.a$//' | tr '\n' ' ') \
             -Wl,--no-whole-archive \
             -lprotobuf \
@@ -270,7 +275,7 @@ jobs:
           name: ${{ env.OUTPUT_BINARY }}-${{ matrix.arch }}
           path: ${{ env.OUTPUT_BINARY }}-${{ matrix.arch }}
           retention-days: 30
-  
+          
   create-release:
     needs: build-static-arm
     runs-on: ubuntu-22.04
@@ -287,7 +292,8 @@ jobs:
       - name: List artifacts
         run: |
           echo "Downloaded artifacts:"
-          find artifacts/ -type f -name "ticket_client-*" -exec ls -lh {} \;
+          # Changed to match the new binary name: ocu_service
+          find artifacts/ -type f -name "${{ env.OUTPUT_BINARY }}-*" -exec ls -lh {} \;
       
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -295,26 +301,25 @@ jobs:
           tag_name: v${{ github.run_number }}
           name: Release Build #${{ github.run_number }}
           body: |
-            ## gRPC Ticket Client - Static ARM Binary
+            ## OCU Service Binary - Static ARM Build
             
             ### Available Binary:
-            - `ticket_client-armv7` - For ARMv7 devices (32-bit)
+            - `ocu_service-armv7` - For ARMv7 devices (32-bit)
             
             ### Usage:
             ```bash
-            chmod +x ticket_client-armv7
-            ./ticket_client-armv7 <server:port> <vehicle_id>
+            chmod +x ocu_service-armv7
+            ./ocu_service-armv7 server [tcp_port] [grpc_server:port]
             ```
             
             ### Features:
             - Fully static binary (no external dependencies required)
+            - Includes all application logic (main, sender, ticket manager, etc.)
             - Built with gRPC ${{ env.GRPC_VERSION }}
-            - Optimized for ARMv7 processors with NEON
-            
-            This binary will work on any ARMv7 Linux system without requiring any libraries to be installed.
           draft: false
           prerelease: false
           files: |
-            artifacts/ticket_client-armv7/ticket_client-armv7
+            # Changed to match the new binary name: ocu_service
+            artifacts/${{ env.OUTPUT_BINARY }}-armv7/${{ env.OUTPUT_BINARY }}-armv7
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
