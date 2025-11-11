@@ -9,7 +9,6 @@ on:
 
 env:
   GRPC_VERSION: v1.60.0
-  # Changed the output name to reflect the main service binary
   OUTPUT_BINARY: ocu_service
 
 jobs:
@@ -34,7 +33,7 @@ jobs:
           path: |
             grpc-install-${{ matrix.arch }}
             grpc-host-tools
-          key: grpc-${{ env.GRPC_VERSION }}-${{ matrix.arch }}-static-v5
+          key: grpc-${{ env.GRPC_VERSION }}-${{ matrix.arch }}-static-v6
       
       - name: Install build tools
         run: |
@@ -47,7 +46,8 @@ jobs:
             ninja-build \
             git \
             wget \
-            python3
+            python3 \
+            unzip
       
       - name: Build gRPC and dependencies (if not cached)
         if: steps.cache-grpc.outputs.cache-hit != 'true'
@@ -90,8 +90,8 @@ jobs:
           GRPC_CPP_PLUGIN_PATH=$(realpath ${{ github.workspace }}/grpc-host-tools/grpc_cpp_plugin)
           
           echo "Host tools built:"
-          echo "  protoc: ${PROTOC_PATH}"
-          echo "  grpc_cpp_plugin: ${GRPC_CPP_PLUGIN_PATH}"
+          echo "  protoc: ${PROTOC_PATH}"
+          echo "  grpc_cpp_plugin: ${GRPC_CPP_PLUGIN_PATH}"
           ls -la ${{ github.workspace }}/grpc-host-tools/
           
           echo "Building static libraries for ${{ matrix.arch }}..."
@@ -173,6 +173,13 @@ jobs:
           echo "Generated files:"
           ls -lh *.pb.* *.grpc.pb.*
       
+      - name: Fix compiler warnings
+        run: |
+          echo "Fixing compiler warnings..."
+          # Fix nodiscard warnings by adding (void) casts
+          sed -i 's/log_purchase(article_id, card_number, quantity, false);/(void)log_purchase(article_id, card_number, quantity, false);/g' sender.cpp
+          echo "Fixed nodiscard warnings in sender.cpp"
+      
       - name: Inspect available libraries
         run: |
           echo "=== All static libraries in grpc-install ==="
@@ -183,7 +190,7 @@ jobs:
           echo "Building static binary for ${{ matrix.arch }}..."
           
           GRPC_INSTALL="${{ github.workspace }}/grpc-install-${{ matrix.arch }}"
-          C_CXX_FLAGS="-std=c++20 ${{ matrix.flags }} -O2 -fPIC -I${GRPC_INSTALL}/include -Iinclude"
+          C_CXX_FLAGS="-std=c++20 ${{ matrix.flags }} -O2 -fPIC -I${GRPC_INSTALL}/include -Iinclude -Wno-unused-result -Wno-cpp"
           
           # 1. Compile all application source files to object files
           echo "Compiling application sources..."
@@ -199,7 +206,7 @@ jobs:
 
           # Compile generated Protobuf files
           ${{ matrix.cross_compile }}-g++ ${C_CXX_FLAGS} -c ticket_sync.pb.cc -o ticket_sync.pb.o
-          ${{ matrix.cross_compile }}-g++ ${C_CXX_FLAGS} -c ticket_sync.grpc.pb.cc -o ticket_sync.grpc.o
+          ${{ matrix.cross_compile }}-g++ ${C_CXX_FLAGS} -c ticket_sync.grpc.pb.cc -o ticket_sync.grpc.pb.o
           
           # 2. Collect all upb/utf8 libraries
           UPB_LIBS=""
@@ -211,14 +218,17 @@ jobs:
           
           echo "Using UPB libraries: ${UPB_LIBS}"
           
-          # 3. Link the final binary
+          # Get all absl libraries
+          ABSL_LIBS=$(find ${GRPC_INSTALL}/lib -name "libabsl_*.a" | xargs -n1 basename | sed 's/^lib/-l/' | sed 's/\.a$//' | tr '\n' ' ')
+          echo "Using ABSL libraries: ${ABSL_LIBS}"
+          
+          # 3. Link the final binary - without inline comments that break the command
           echo "Linking final binary..."
           ${{ matrix.cross_compile }}-g++ \
             -static \
             ${{ matrix.flags }} \
             -O2 \
             -o ${{ env.OUTPUT_BINARY }}-${{ matrix.arch }} \
-            # Application Object Files
             main.o \
             sender.o \
             ticket_manager.o \
@@ -227,15 +237,13 @@ jobs:
             coupons.o \
             articles.o \
             sqlite3.o \
-            # Protobuf Object Files
             ticket_sync.pb.o \
-            ticket_sync.grpc.o \
+            ticket_sync.grpc.pb.o \
             -L${GRPC_INSTALL}/lib \
             -Wl,--whole-archive \
             -lgrpc++ \
             -lgrpc \
-            # Include all absl libraries required by gRPC
-            $(find ${GRPC_INSTALL}/lib -name "libabsl_*.a" | xargs -n1 basename | sed 's/^lib/-l/' | sed 's/\.a$//' | tr '\n' ' ') \
+            ${ABSL_LIBS} \
             -Wl,--no-whole-archive \
             -lprotobuf \
             -lgpr \
@@ -292,7 +300,6 @@ jobs:
       - name: List artifacts
         run: |
           echo "Downloaded artifacts:"
-          # Changed to match the new binary name: ocu_service
           find artifacts/ -type f -name "${{ env.OUTPUT_BINARY }}-*" -exec ls -lh {} \;
       
       - name: Create Release
@@ -319,7 +326,6 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            # Changed to match the new binary name: ocu_service
             artifacts/${{ env.OUTPUT_BINARY }}-armv7/${{ env.OUTPUT_BINARY }}-armv7
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
