@@ -219,15 +219,30 @@ void Session::process_request(std::string_view request)
         auto args = trimmed.substr(2);
         std::istringstream iss(args);
         std::string token;
-        int validator_id;
+        std::string uuid;
+        std::string timestamp;
+        std::string hash;
+        int validator_id = 1;
 
-        if(!(iss >> token >> validator_id))
+        if (std::getline(iss, uuid, '|') && 
+            std::getline(iss, token, '|') && 
+            std::getline(iss, timestamp, '|') && 
+            std::getline(iss, hash)) 
+        {
+            
+ 
+            std::cout << "Parsed QR: token=" << token 
+                    << ", uuid=" << uuid
+                    << ", timestamp=" << timestamp
+                    << ", hash=" << hash 
+                    << ", validator_id=" << validator_id << "\n";
+            
+        } else 
         {
             std::cout << "Invalid QR format \n";
             do_write("Invalid QR format");
             return;
         }
-
         try
         {
             std::cout << "Handling QR token \n";
@@ -351,7 +366,7 @@ void Session::handle_fetch_articles()
     }
 }
 
-void Session::handle_card_validation(std::string_view card_number)
+// void Session::handle_card_validation(std::string_view card_number)
 {
     auto coupon_id = find_coupon_by_card(card_number);
     
