@@ -581,14 +581,14 @@ bool Session::validate_QR(std::string token)
     if(is_valid) 
     {
         std::cout << "Valid QR token: " << token << "\n";
-        do_write("1");
+        do_write("true");
         return is_valid;
 
     }
     else
     {
         std::cout << "Invalis QR token: " << token << "\n";
-        do_write("0");
+        do_write("false");
         return is_valid;
     }
     
