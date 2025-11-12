@@ -73,7 +73,7 @@ void Database::init_tables()
             "id INTEGER PRIMARY KEY AUTOINCREMENT,"
             "datetime TEXT DEFAULT(datetime('now','localtime')),"
             "qr_code TEXT,"
-            "validator_id,"
+            "validator_id INTEGER,"
             "valid INTEGER);"
         },
         std::string_view

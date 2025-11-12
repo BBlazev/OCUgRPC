@@ -577,6 +577,7 @@ bool Session::validate_QR(std::string token)
         }
     }
     sqlite3_finalize(stmt);
+    if(is_valid) std::cout << "Valid QR token: " << token << "\n";
     return is_valid;
     
 }
