@@ -216,6 +216,11 @@ void Session::process_request(std::string_view request)
     if(trimmed.starts_with("QR"))
     {
         // 1. get QR string only
+
+        //KsF-Zet|
+        //1488bf99-9b7d-4c25-b00b-22065f12649b|
+        //638974309111354660|
+        //e279acf941396b65aec32aeca1c0e4bf4b2a9cddc500f99677a9ff7f800ebe75
         auto args = trimmed.substr(2);
         std::istringstream iss(args);
         std::string token;
@@ -231,8 +236,8 @@ void Session::process_request(std::string_view request)
         {
             
  
-            std::cout << "Parsed QR: token=" << token 
-                    << ", uuid=" << uuid
+            std::cout << "Parsed QR: uuid" << uuid  
+                    << ", token: "<< token 
                     << ", timestamp=" << timestamp
                     << ", hash=" << hash 
                     << ", validator_id=" << validator_id << "\n";
@@ -244,6 +249,7 @@ void Session::process_request(std::string_view request)
             do_write("Invalid QR format");
             return;
         }
+
         try
         {
             std::cout << "Handling QR token \n";
