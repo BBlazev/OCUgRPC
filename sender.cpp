@@ -10,7 +10,8 @@ using json = nlohmann::json;
 Sender::Sender(Database& db, int port) 
     : db_(db)
     , io_context_()           
-    , acceptor_(io_context_)  
+    , acceptor_(io_context_) 
+    , running_(true)
 {
     try {
         std::cout << "[DEBUG] Opening acceptor...\n";
@@ -35,6 +36,7 @@ Sender::Sender(Database& db, int port)
 
 void Sender::run()
 {
+
     std::cout << "[DEBUG] Entering run() method...\n";
     std::cout << "[DEBUG] Starting accept...\n";
     start_accept();
@@ -49,11 +51,28 @@ void Sender::run()
 
 void Sender::stop()
 {
+    std::cout << "[Sender] Stopping TCP server...\n";
+    running_ = false;
+    
+    if (acceptor_.is_open()) {
+        asio::error_code ec;
+        acceptor_.close(ec);
+        if (ec) {
+            std::cerr << "[Sender] Error closing acceptor: " << ec.message() << "\n";
+        }
+    }
+    
     io_context_.stop();
+    
+    std::cout << "[Sender] TCP server stopped\n";
 }
 
 void Sender::start_accept()
 {
+    if (!running_) {
+        return;
+    }
+    
     acceptor_.async_accept
     (
         [this](asio::error_code ec, tcp::socket socket)
@@ -63,8 +82,13 @@ void Sender::start_accept()
                 std::cout << "New client connected\n";
                 std::make_shared<Session>(std::move(socket), db_)->start();
             }
-            else std::cerr << "Accept error: " << ec.message() << std::endl;
-            start_accept();
+            else if (ec != asio::error::operation_aborted) {
+                std::cerr << "Accept error: " << ec.message() << std::endl;
+            }
+            
+            if (running_) {
+                start_accept();
+            }
         }
     );
 }
@@ -554,6 +578,7 @@ bool Session::validate_QR(std::string token)
     sqlite3_bind_text(stmt, 1, token.c_str(), -1, SQLITE_TRANSIENT);
 
     bool is_valid = false;
+    bool is_activated = false;
 
     if(sqlite3_step(stmt) == SQLITE_ROW)
     {
@@ -573,7 +598,10 @@ bool Session::validate_QR(std::string token)
             if(time_from && time_to)
             {
                 is_valid = (now >= *time_from && now <= *time_to);
+                //if(is_valid)
+                //    is_activated = handle_QR_activation(token);
                 if(!is_valid) std::cout << "QR not valid for: " << token << '\n';
+
             }
         }
     }
@@ -587,7 +615,7 @@ bool Session::validate_QR(std::string token)
     }
     else
     {
-        std::cout << "Invalis QR token: " << token << "\n";
+        std::cout << "Invalid QR token: " << token << "\n";
         do_write(R"({"isValid":false})");
         return is_valid;
     }
@@ -624,3 +652,24 @@ bool Session::validate_QR(std::string token)
         return std::chrono::system_clock::from_time_t(time);
 
     }
+
+bool Session::handle_QR_activation(std::string token)
+{
+    // pogledaj da li je aktivirano
+    const char* sql =
+    "SELECT active from tickets where Token = ?;";
+
+    sqlite3_stmt* stmt;
+
+    if(sqlite3_prepare_v2(db_.get(),sql, -1, &stmt, nullptr) != SQLITE_OK)
+    {
+        std::cout << "Failed to prepare QR activation ";
+    }
+    
+
+
+    // ako nije aktiviraj
+
+    
+    
+}

@@ -98,11 +98,13 @@ namespace Tickets
                     }
                 }
                 
+                context.TryCancel();
+
                 // Check status
                 grpc::Status status = reader->Finish();
-                if (!status.ok()) {
+                if (!status.ok() && status.error_code() != grpc::StatusCode::CANCELLED) {
                     std::cerr << "[TicketManager] Stream ended: " << status.error_code() 
-                             << " - " << status.error_message() << "\n";
+                            << " - " << status.error_message() << "\n";
                     
                     if (running_) {
                         std::cout << "[TicketManager] Reconnecting in 5 seconds...\n";
@@ -166,6 +168,14 @@ namespace Tickets
 
     bool TicketManager::InsertTicket(const Ticket& ticket)
     {
+        // Begin transaction
+        char* err_msg = nullptr;
+        if (sqlite3_exec(db_.get(), "BEGIN TRANSACTION;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
+            std::cerr << "[TicketManager] Failed to begin transaction: " << err_msg << '\n';
+            sqlite3_free(err_msg);
+            return false;
+        }
+        
         const char* sql = 
             "INSERT OR REPLACE INTO tickets (ticket_id, active, date_created, account_id, "
             "caption, valid_from, valid_to, traffic_area, traffic_zone, "
@@ -176,6 +186,7 @@ namespace Tickets
         if (sqlite3_prepare_v2(db_.get(), sql, -1, &stmt, nullptr) != SQLITE_OK) {
             std::cerr << "[TicketManager] Failed to prepare statement: " 
                      << sqlite3_errmsg(db_.get()) << '\n';
+            sqlite3_exec(db_.get(), "ROLLBACK;", nullptr, nullptr, nullptr);
             return false;
         }
         
@@ -217,16 +228,23 @@ namespace Tickets
         
         bool success = (sqlite3_step(stmt) == SQLITE_DONE);
         
+        sqlite3_finalize(stmt);
+        
         if (!success) {
             std::cerr << "[TicketManager] Failed to insert ticket: " 
                      << sqlite3_errmsg(db_.get()) << '\n';
+            sqlite3_exec(db_.get(), "ROLLBACK;", nullptr, nullptr, nullptr);
+            return false;
         }
         
+        // Commit transaction - THIS IS THE KEY FIX!
+        if (sqlite3_exec(db_.get(), "COMMIT;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
+            std::cerr << "[TicketManager] Failed to commit transaction: " << err_msg << '\n';
+            sqlite3_free(err_msg);
+            return false;
+        }
         
-
-
-        sqlite3_finalize(stmt);
-        return success;
+        return true;
     }
 
     std::string TicketManager::TimestampToString(const google::protobuf::Timestamp& ts)
