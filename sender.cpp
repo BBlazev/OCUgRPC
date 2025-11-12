@@ -253,7 +253,8 @@ void Session::process_request(std::string_view request)
         try
         {
             std::cout << "Handling QR token \n";
-            handle_QR(token, validator_id);
+            validate_QR(token);
+            //handle_QR(token, validator_id);
         }
         catch(const std::exception& e)
         {
@@ -577,8 +578,19 @@ bool Session::validate_QR(std::string token)
         }
     }
     sqlite3_finalize(stmt);
-    if(is_valid) std::cout << "Valid QR token: " << token << "\n";
-    return is_valid;
+    if(is_valid) 
+    {
+        std::cout << "Valid QR token: " << token << "\n";
+        do_write("1");
+        return is_valid;
+
+    }
+    else
+    {
+        std::cout << "Invalis QR token: " << token << "\n";
+        do_write("0");
+        return is_valid;
+    }
     
 }
 
