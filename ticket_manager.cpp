@@ -46,6 +46,16 @@ namespace Tickets
         
         std::cout << "[TicketManager] Stopping...\n";
         
+        // Cancel the gRPC context to interrupt the blocking Read() call
+        // This must be done BEFORE joining the thread
+        {
+            std::lock_guard<std::mutex> lock(context_mutex_);
+            if (current_context_) {
+                std::cout << "[TicketManager] Cancelling gRPC stream...\n";
+                current_context_->TryCancel();
+            }
+        }
+        
         if (streaming_thread_.joinable()) {
             streaming_thread_.join();
         }
@@ -80,8 +90,13 @@ namespace Tickets
                 
                 std::cout << "[TicketManager] Connected. Waiting for new tickets...\n";
                 
-                // Start streaming
+                // Start streaming - store context so Stop() can cancel it
                 grpc::ClientContext context;
+                {
+                    std::lock_guard<std::mutex> lock(context_mutex_);
+                    current_context_ = &context;
+                }
+                
                 std::unique_ptr<grpc::ClientReader<vehicle::SubscribeForNewTicketsResponse>> reader(
                     stub_->SubscribeForNewTickets(&context, request)
                 );
@@ -105,7 +120,11 @@ namespace Tickets
                     }
                 }
                 
-                context.TryCancel();
+                // Clear context pointer
+                {
+                    std::lock_guard<std::mutex> lock(context_mutex_);
+                    current_context_ = nullptr;
+                }
 
                 // Check status
                 grpc::Status status = reader->Finish();
@@ -117,6 +136,8 @@ namespace Tickets
                         std::cout << "[TicketManager] Reconnecting in 5 seconds...\n";
                         std::this_thread::sleep_for(std::chrono::seconds(5));
                     }
+                } else if (status.error_code() == grpc::StatusCode::CANCELLED) {
+                    std::cout << "[TicketManager] Stream cancelled (shutdown requested)\n";
                 }
                 
             } catch (const std::exception& e) {

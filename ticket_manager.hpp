@@ -1,12 +1,14 @@
 #pragma once
 
-#include <memory>
+#include "database.hpp"
+#include "ticket.pb.h"
+#include <grpcpp/grpcpp.h>
 #include <string>
 #include <thread>
 #include <atomic>
-#include <grpcpp/grpcpp.h>
-#include "ticket_sync.grpc.pb.h"
-#include "database.hpp"
+#include <memory>
+#include <mutex>
+#include <optional>
 
 namespace Tickets 
 {
@@ -47,5 +49,8 @@ namespace Tickets
         std::unique_ptr<vehicle::TicketSync::Stub> stub_;
         std::shared_ptr<grpc::Channel> channel_;
         std::thread streaming_thread_;
+
+        std::mutex context_mutex_;
+        grpc::ClientContext* current_context_ = nullptr;
     };
 }
