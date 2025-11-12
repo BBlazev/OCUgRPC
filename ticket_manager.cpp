@@ -272,14 +272,12 @@ namespace Tickets
             return false;
         }
         
-        // Force WAL checkpoint to ensure data is written to main database file
-        // This makes the data immediately visible to other connections
-        // Use FULL mode to ensure all WAL frames are checkpointed
+
         int log_size, checkpointed;
         int rc = sqlite3_wal_checkpoint_v2(
             db_.get(),
             nullptr,  // All databases
-            SQLITE_CHECKPOINT_FULL,  // Force complete checkpoint
+            SQLITE_CHECKPOINT_FULL,  
             &log_size,
             &checkpointed
         );
@@ -287,7 +285,6 @@ namespace Tickets
         if (rc != SQLITE_OK) {
             std::cerr << "[TicketManager] Warning: WAL checkpoint failed: " 
                      << sqlite3_errmsg(db_.get()) << '\n';
-            // Don't fail the insert - data is still committed, just not checkpointed
         } else {
             std::cout << "[TicketManager] WAL checkpoint: " << checkpointed 
                      << "/" << log_size << " frames checkpointed\n";
