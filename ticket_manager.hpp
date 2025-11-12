@@ -1,6 +1,7 @@
 #pragma once
 
 #include "database.hpp"
+#include "ticket.grpc.pb.h"
 #include <grpcpp/grpcpp.h>
 #include <string>
 #include <thread>
