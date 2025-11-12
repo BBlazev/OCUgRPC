@@ -14,6 +14,13 @@ namespace Tickets
         std::cout << "=== Ticket Manager (gRPC Client) ===\n";
         std::cout << "Server: " << server_address_ << "\n";
         std::cout << "=====================================\n\n";
+        
+        // Enable WAL checkpoint on every transaction for immediate persistence
+        char* err_msg = nullptr;
+        if (sqlite3_exec(db_.get(), "PRAGMA synchronous = NORMAL;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
+            std::cerr << "[TicketManager] Warning: Could not set synchronous mode: " << err_msg << '\n';
+            sqlite3_free(err_msg);
+        }
     }
 
     TicketManager::~TicketManager()
@@ -168,9 +175,9 @@ namespace Tickets
 
     bool TicketManager::InsertTicket(const Ticket& ticket)
     {
-        // Begin transaction
+        // Use IMMEDIATE transaction to get a write lock right away
         char* err_msg = nullptr;
-        if (sqlite3_exec(db_.get(), "BEGIN TRANSACTION;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
+        if (sqlite3_exec(db_.get(), "BEGIN IMMEDIATE;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
             std::cerr << "[TicketManager] Failed to begin transaction: " << err_msg << '\n';
             sqlite3_free(err_msg);
             return false;
@@ -237,11 +244,32 @@ namespace Tickets
             return false;
         }
         
-        // Commit transaction - THIS IS THE KEY FIX!
+        // Commit transaction
         if (sqlite3_exec(db_.get(), "COMMIT;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
             std::cerr << "[TicketManager] Failed to commit transaction: " << err_msg << '\n';
             sqlite3_free(err_msg);
             return false;
+        }
+        
+        // Force WAL checkpoint to ensure data is written to main database file
+        // This makes the data immediately visible to other connections
+        // Use FULL mode to ensure all WAL frames are checkpointed
+        int log_size, checkpointed;
+        int rc = sqlite3_wal_checkpoint_v2(
+            db_.get(),
+            nullptr,  // All databases
+            SQLITE_CHECKPOINT_FULL,  // Force complete checkpoint
+            &log_size,
+            &checkpointed
+        );
+        
+        if (rc != SQLITE_OK) {
+            std::cerr << "[TicketManager] Warning: WAL checkpoint failed: " 
+                     << sqlite3_errmsg(db_.get()) << '\n';
+            // Don't fail the insert - data is still committed, just not checkpointed
+        } else {
+            std::cout << "[TicketManager] WAL checkpoint: " << checkpointed 
+                     << "/" << log_size << " frames checkpointed\n";
         }
         
         return true;

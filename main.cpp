@@ -14,17 +14,21 @@
 
 Sender* g_sender = nullptr;
 Tickets::TicketManager* g_ticket_manager = nullptr;
-std::atomic<bool> g_running(false);
+std::atomic<bool> g_running(true);
 
 void signal_handler(int signal) {
     std::cout << "\nReceived signal " << signal << ", shutting down...\n";
     g_running = false;
     
+    // Stop ticket manager first (gRPC client)
     if (g_ticket_manager) {
+        std::cout << "[MAIN] Stopping ticket manager...\n";
         g_ticket_manager->Stop();
     }
     
+    // Then stop sender (TCP server)
     if (g_sender) {
+        std::cout << "[MAIN] Stopping TCP server...\n";
         g_sender->stop();
     }
 }
@@ -82,12 +86,27 @@ int main(int argc, char* argv[]) {
             
             g_running = true;
             
-            // Run TCP server (this blocks)
+            // Run TCP server in a separate thread so we can handle shutdown
+            std::thread sender_thread([&sender]() {
+                sender.run();
+            });
+            
             std::cout << "[MAIN] All services started. Press Ctrl+C to stop.\n";
-            sender.run();
+            
+            // Wait for shutdown signal
+            while (g_running) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
             
             // Clean shutdown
+            std::cout << "[MAIN] Initiating shutdown...\n";
+            sender.stop();
             ticket_manager.Stop();
+            
+            if (sender_thread.joinable()) {
+                sender_thread.join();
+            }
+            
             std::cout << "[MAIN] All services stopped\n";
         }
         else if (command == "fetch" && argc >= 3) {
