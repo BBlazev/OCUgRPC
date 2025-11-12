@@ -506,7 +506,7 @@ void Session::handle_QR(std::string token, int validator_id)
 
     const char* sql =
         "INSERT INTO qr_validated(qr_code, validator_id, valid) "
-        "values (datetime('now','localtime'), ?, ?, ?);";
+        "VALUES (?, ?, ?);";
 
     sqlite3_stmt* stmt;
     if(sqlite3_prepare_v2(db_.get(), sql, -1, &stmt, nullptr) != SQLITE_OK)
