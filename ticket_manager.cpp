@@ -227,8 +227,17 @@ namespace Tickets
         }
         
         sqlite3_bind_text(stmt, 5, ticket.caption.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 6, ticket.valid_from.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 7, ticket.valid_to.c_str(), -1, SQLITE_TRANSIENT);
+        if (ticket.valid_from.empty()) {
+            sqlite3_bind_null(stmt, 6);
+        } else {
+            sqlite3_bind_text(stmt, 6, ticket.valid_from.c_str(), -1, SQLITE_TRANSIENT);
+        }
+
+        if (ticket.valid_to.empty()) {
+            sqlite3_bind_null(stmt, 7);
+        } else {
+            sqlite3_bind_text(stmt, 7, ticket.valid_to.c_str(), -1, SQLITE_TRANSIENT);
+        }
         sqlite3_bind_text(stmt, 8, ticket.traffic_area.c_str(), -1, SQLITE_TRANSIENT);
         
         if (ticket.traffic_zone) {
