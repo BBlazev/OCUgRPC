@@ -569,7 +569,7 @@ bool Session::validate_QR(std::string token)
 
     sqlite3_stmt* stmt;
 
-    if(sqlite3_prepare_v2(db_.get(), sql, -1, &stmt, nullptr))
+    if(sqlite3_prepare_v2(db_.get(), sql, -1, &stmt, nullptr) != SQLITE_OK)
     {
         std::cerr << "Failed to prepare query for validate_QR\n";
         return false;
@@ -578,7 +578,6 @@ bool Session::validate_QR(std::string token)
     sqlite3_bind_text(stmt, 1, token.c_str(), -1, SQLITE_TRANSIENT);
 
     bool is_valid = false;
-    bool is_activated = false;
 
     if(sqlite3_step(stmt) == SQLITE_ROW)
     {
@@ -587,7 +586,6 @@ bool Session::validate_QR(std::string token)
 
         if(valid_from_str && valid_to_str)
         {
-            // Copy strings to avoid dangling pointers
             std::string valid_from_copy(valid_from_str);
             std::string valid_to_copy(valid_to_str);
 
@@ -603,63 +601,61 @@ bool Session::validate_QR(std::string token)
         }
         else
         {
-            const char* sql = "UPDATE tickets SET valid_from = ?, valid_to = ? WHERE token = ?;";
-
-            sqlite3_stmt* stmt;
+            sqlite3_finalize(stmt);
             
-            if(!sqlite3_prepare_v2(db_.get(),sql, -1, &stmt, nullptr) != SQLITE_OK)
+            const char* update_sql = "UPDATE tickets SET valid_from = ?, valid_to = ? WHERE token = ?;";
+            sqlite3_stmt* stmt_update;
+            
+            if(sqlite3_prepare_v2(db_.get(), update_sql, -1, &stmt_update, nullptr) != SQLITE_OK)
             {
-                std::cout << "Failed to prepare activating ticket" << sqlite3_errmsg(db_.get());
-                return -1;
+                std::cout << "Failed to prepare activating ticket: " << sqlite3_errmsg(db_.get()) << '\n';
+                return false;
             }
-            sqlite3_bind_text(stmt, 1, token.c_str(), -1, SQLITE_TRANSIENT);
 
             struct StmtDeleter
+            {
+                void operator()(sqlite3_stmt* s) const noexcept
                 {
-                    void operator()(sqlite3_stmt* s) const noexcept
-                    {
-                        if(s) sqlite3_finalize(s);
-                    }
-                };
-            std::unique_ptr<sqlite3_stmt, StmtDeleter> stmt_guard(stmt);
+                    if(s) sqlite3_finalize(s);
+                }
+            };
+            std::unique_ptr<sqlite3_stmt, StmtDeleter> stmt_guard(stmt_update);
             
             auto now = std::chrono::system_clock::now();
             auto expires = now + std::chrono::minutes(30);
                 
-                // Convert to ISO8601 strings
             std::string valid_from_str = format_iso8601(now);
             std::string valid_to_str = format_iso8601(expires);
                 
-            sqlite3_bind_text(stmt, 1, valid_from_str.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(stmt, 2, valid_to_str.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(stmt, 3, token.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt_update, 1, valid_from_str.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt_update, 2, valid_to_str.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt_update, 3, token.c_str(), -1, SQLITE_TRANSIENT);
 
-            if(!sqlite3_step(stmt) != SQLITE_DONE)
+            if(sqlite3_step(stmt_update) != SQLITE_DONE)
             {
-                std::cout << "Failed to insert/activate ticket" << sqlite3_errmsg(db_.get());
-                return -1;
+                std::cout << "Failed to insert/activate ticket: " << sqlite3_errmsg(db_.get()) << '\n';
+                return false;
             }
             std::cout << "Ticket ACTIVATED\n";
             do_write(R"({"status":"TICKET_ACTIVATED","isValid":true})");
-            is_valid = true;
-            return is_valid;
+            return true;
         }
     }
+    
     sqlite3_finalize(stmt);
+    
     if(is_valid) 
     {
         std::cout << "Valid QR token: " << token << "\n";
         do_write(R"({"isValid":true})");
-        return is_valid;
-
     }
     else
     {
         std::cout << "Invalid QR token: " << token << "\n";
         do_write(R"({"isValid":false})");
-        return is_valid;
     }
     
+    return is_valid;
 }
 
 std::optional<std::chrono::system_clock::time_point>
