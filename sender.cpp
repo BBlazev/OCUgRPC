@@ -598,11 +598,51 @@ bool Session::validate_QR(std::string token)
             if(time_from && time_to)
             {
                 is_valid = (now >= *time_from && now <= *time_to);
-                //if(is_valid)
-                //    is_activated = handle_QR_activation(token);
                 if(!is_valid) std::cout << "QR not valid for: " << token << '\n';
-
             }
+        }
+        else
+        {
+            const char* sql = "UPDATE tickets SET valid_from = ?, valid_to = ? WHERE token = ?;";
+
+            sqlite3_stmt* stmt;
+            
+            if(!sqlite3_prepare_v2(db_.get(),sql, -1, &stmt, nullptr) != SQLITE_OK)
+            {
+                std::cout << "Failed to prepare activating ticket" << sqlite3_errmsg(db_.get());
+                return -1;
+            }
+            sqlite3_bind_text(stmt, 1, token.c_str(), -1, SQLITE_TRANSIENT);
+
+            struct StmtDeleter
+                {
+                    void operator()(sqlite3_stmt* s) const noexcept
+                    {
+                        if(s) sqlite3_finalize(s);
+                    }
+                };
+            std::unique_ptr<sqlite3_stmt, StmtDeleter> stmt_guard(stmt);
+            
+            auto now = std::chrono::system_clock::now();
+            auto expires = now + std::chrono::minutes(30);
+                
+                // Convert to ISO8601 strings
+            std::string valid_from_str = format_iso8601(now);
+            std::string valid_to_str = format_iso8601(expires);
+                
+            sqlite3_bind_text(stmt, 1, valid_from_str.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 2, valid_to_str.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 3, token.c_str(), -1, SQLITE_TRANSIENT);
+
+            if(!sqlite3_step(stmt) != SQLITE_DONE)
+            {
+                std::cout << "Failed to insert/activate ticket" << sqlite3_errmsg(db_.get());
+                return -1;
+            }
+            std::cout << "Ticket ACTIVATED\n";
+            do_write(R"({"status":"TICKET_ACTIVATED","isValid":true})");
+            is_valid = true;
+            return is_valid;
         }
     }
     sqlite3_finalize(stmt);
@@ -622,12 +662,11 @@ bool Session::validate_QR(std::string token)
     
 }
 
-    std::optional<std::chrono::system_clock::time_point>
+std::optional<std::chrono::system_clock::time_point>
     Session::parse_iso8601(std::string_view datetime_str)
     {
         std::tm tm = {};
         
-        // Manual parsing of ISO 8601 format: 2024-01-15T10:30:00
         int year, month, day, hour, min, sec;
         int parsed = std::sscanf(datetime_str.data(), "%d-%d-%dT%d:%d:%d",
                                 &year, &month, &day, &hour, &min, &sec);
@@ -652,6 +691,16 @@ bool Session::validate_QR(std::string token)
         return std::chrono::system_clock::from_time_t(time);
 
     }
+std::string Session::format_iso8601(const std::chrono::system_clock::time_point& tp)
+{
+    std::time_t time = std::chrono::system_clock::to_time_t(tp);
+    std::tm tm = *std::localtime(&time);
+    
+    char buffer[20];
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%S", &tm);
+    
+    return std::string(buffer);
+}
 
 bool Session::handle_QR_activation(std::string token)
 {

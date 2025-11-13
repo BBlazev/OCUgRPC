@@ -46,8 +46,6 @@ namespace Tickets
         
         std::cout << "[TicketManager] Stopping...\n";
         
-        // Cancel the gRPC context to interrupt the blocking Read() call
-        // This must be done BEFORE joining the thread
         {
             std::lock_guard<std::mutex> lock(context_mutex_);
             if (current_context_) {
@@ -69,13 +67,12 @@ namespace Tickets
             try {
                 std::cout << "[TicketManager] Connecting to gRPC server at " << server_address_ << "...\n";
                 
-                // Create channel
+                
                 channel_ = grpc::CreateChannel(
                     server_address_,
                     grpc::InsecureChannelCredentials()
                 );
                 
-                // Wait for connection
                 auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(5);
                 if (!channel_->WaitForConnected(deadline)) {
                     std::cerr << "[TicketManager] Failed to connect to server. Retrying in 5 seconds...\n";
