@@ -191,154 +191,116 @@ namespace Tickets
         return ticket;
     }
 
-bool Session::validate_QR(std::string token)
-{
-    const char* sql = 
-        "SELECT token, valid_from, valid_to from tickets where token = ?;";
 
-    sqlite3_stmt* stmt;
-
-    if(sqlite3_prepare_v2(db_.get(), sql, -1, &stmt, nullptr) != SQLITE_OK)
+bool TicketManager::InsertTicket(const Ticket& ticket)
     {
-        std::cerr << "Failed to prepare query for validate_QR: " << sqlite3_errmsg(db_.get()) << "\n";
-        return false;
-    }
-
-    sqlite3_bind_text(stmt, 1, token.c_str(), -1, SQLITE_TRANSIENT);
-
-    bool is_valid = false;
-
-    if(sqlite3_step(stmt) == SQLITE_ROW)
-    {
-        const char* valid_from_str = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-        const char* valid_to_str = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-
-        if(valid_from_str && valid_to_str)
-        {
-            std::string valid_from_copy(valid_from_str);
-            std::string valid_to_copy(valid_to_str);
-
-            auto time_from = parse_iso8601(valid_from_copy);
-            auto time_to = parse_iso8601(valid_to_copy);
-            auto now = std::chrono::system_clock::now();
-
-            if(time_from && time_to)
-            {
-                is_valid = (now >= *time_from && now <= *time_to);
-                if(is_valid) 
-                {
-                    std::cout << "Ticket is VALID (within time range)\n";
-                }
-                else 
-                {
-                    std::cout << "Ticket EXPIRED or not yet valid\n";
-                }
-            }
-            else
-            {
-                std::cout << "Failed to parse times\n";
-            }
+        char* err_msg = nullptr;
+        if (sqlite3_exec(db_.get(), "BEGIN IMMEDIATE;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
+            std::cerr << "[TicketManager] Failed to begin transaction: " << err_msg << '\n';
+            sqlite3_free(err_msg);
+            return false;
         }
-        else
-        {
-            std::cout << "Ticket times are NULL - activating ticket\n";
-            
-            sqlite3_finalize(stmt);
-            
-            char* err_msg = nullptr;
-            if (sqlite3_exec(db_.get(), "BEGIN IMMEDIATE;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
-                std::cerr << "Failed to begin transaction: " << err_msg << '\n';
-                sqlite3_free(err_msg);
-                return false;
-            }
-            
-            const char* update_sql = "UPDATE tickets SET valid_from = ?, valid_to = ? WHERE token = ?;";
-            sqlite3_stmt* stmt_update;
-            
-            if(sqlite3_prepare_v2(db_.get(), update_sql, -1, &stmt_update, nullptr) != SQLITE_OK)
-            {
-                std::cout << "Failed to prepare activating ticket: " << sqlite3_errmsg(db_.get()) << '\n';
-                sqlite3_exec(db_.get(), "ROLLBACK;", nullptr, nullptr, nullptr);
-                return false;
-            }
 
-            struct StmtDeleter
-            {
-                void operator()(sqlite3_stmt* s) const noexcept
-                {
-                    if(s) sqlite3_finalize(s);
-                }
-            };
-            std::unique_ptr<sqlite3_stmt, StmtDeleter> stmt_guard(stmt_update);
-            
-            auto now = std::chrono::system_clock::now();
-            auto expires = now + std::chrono::minutes(30);
-                
-            std::string valid_from_new = format_iso8601(now);
-            std::string valid_to_new = format_iso8601(expires);
-                
-            sqlite3_bind_text(stmt_update, 1, valid_from_new.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(stmt_update, 2, valid_to_new.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(stmt_update, 3, token.c_str(), -1, SQLITE_TRANSIENT);
+        const char* sql = 
+            "INSERT OR REPLACE INTO tickets (ticket_id, active, date_created, account_id, "
+            "caption, valid_from, valid_to, traffic_area, traffic_zone, "
+            "article_id, invoice_item_id, token) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
 
-            if(sqlite3_step(stmt_update) != SQLITE_DONE)
-            {
-                std::cout << "Failed to activate ticket: " << sqlite3_errmsg(db_.get()) << '\n';
-                sqlite3_exec(db_.get(), "ROLLBACK;", nullptr, nullptr, nullptr);
-                return false;
-            }
-            
-            // Commit transaction
-            if (sqlite3_exec(db_.get(), "COMMIT;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
-                std::cerr << "Failed to commit transaction: " << err_msg << '\n';
-                sqlite3_free(err_msg);
-                return false;
-            }
-            
-            int log_size, checkpointed;
-            int rc = sqlite3_wal_checkpoint_v2(
-                db_.get(),
-                nullptr,
-                SQLITE_CHECKPOINT_FULL,
-                &log_size,
-                &checkpointed
-            );
-            
-            if (rc != SQLITE_OK) {
-                std::cerr << "Warning: WAL checkpoint failed: " 
-                         << sqlite3_errmsg(db_.get()) << '\n';
-            } else {
-                std::cout << "WAL checkpoint: " << checkpointed 
-                         << "/" << log_size << " frames checkpointed\n";
-            }
-            
-            std::cout << "Ticket ACTIVATED\n";
-            do_write(R"({"status":"TICKET_ACTIVATED","isValid":true})");
-            return true;
+        sqlite3_stmt* stmt;
+        if (sqlite3_prepare_v2(db_.get(), sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            std::cerr << "[TicketManager] Failed to prepare statement: " 
+                     << sqlite3_errmsg(db_.get()) << '\n';
+            sqlite3_exec(db_.get(), "ROLLBACK;", nullptr, nullptr, nullptr);
+            return false;
         }
-    }
-    else
-    {
-        std::cout << "Ticket NOT FOUND in database\n";
-    }
-    
-    sqlite3_finalize(stmt);
-    
-    if(is_valid) 
-    {
-        std::cout << "Valid QR token: " << token << "\n";
-        do_write(R"({"isValid":true})");
-    }
-    else
-    {
-        std::cout << "Invalid QR token: " << token << "\n";
-        do_write(R"({"isValid":false})");
-    }
-    
-    return is_valid;
+
+        // Bind parameters
+        sqlite3_bind_int64(stmt, 1, ticket.ticket_id);
+        sqlite3_bind_int(stmt, 2, ticket.active ? 1 : 0);
+        sqlite3_bind_text(stmt, 3, ticket.date_created.c_str(), -1, SQLITE_TRANSIENT);
+
+        if (ticket.account_id) {
+            sqlite3_bind_int(stmt, 4, *ticket.account_id);
+        } else {
+            sqlite3_bind_null(stmt, 4);
+        }
+
+        sqlite3_bind_text(stmt, 5, ticket.caption.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 6, ticket.valid_from.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 7, ticket.valid_to.c_str(), -1, SQLITE_TRANSIENT);
+        if (ticket.valid_from.empty()) {
+            sqlite3_bind_null(stmt, 6);
+        } else {
+            sqlite3_bind_text(stmt, 6, ticket.valid_from.c_str(), -1, SQLITE_TRANSIENT);
+        }
+
+        if (ticket.valid_to.empty()) {
+            sqlite3_bind_null(stmt, 7);
+        } else {
+            sqlite3_bind_text(stmt, 7, ticket.valid_to.c_str(), -1, SQLITE_TRANSIENT);
+        }
+        sqlite3_bind_text(stmt, 8, ticket.traffic_area.c_str(), -1, SQLITE_TRANSIENT);
+
+        if (ticket.traffic_zone) {
+            sqlite3_bind_int(stmt, 9, *ticket.traffic_zone);
+        } else {
+            sqlite3_bind_null(stmt, 9);
+        }
+
+        if (ticket.article_id) {
+            sqlite3_bind_int(stmt, 10, *ticket.article_id);
+        } else {
+            sqlite3_bind_null(stmt, 10);
+        }
+
+        if (ticket.invoice_item_id) {
+            sqlite3_bind_int(stmt, 11, *ticket.invoice_item_id);
+        } else {
+            sqlite3_bind_null(stmt, 11);
+        }
+
+        sqlite3_bind_text(stmt, 12, ticket.token.c_str(), -1, SQLITE_TRANSIENT);
+
+        bool success = (sqlite3_step(stmt) == SQLITE_DONE);
+
+        sqlite3_finalize(stmt);
+
+        if (!success) {
+            std::cerr << "[TicketManager] Failed to insert ticket: " 
+                     << sqlite3_errmsg(db_.get()) << '\n';
+            sqlite3_exec(db_.get(), "ROLLBACK;", nullptr, nullptr, nullptr);
+            return false;
+        }
+
+        if (sqlite3_exec(db_.get(), "COMMIT;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
+            std::cerr << "[TicketManager] Failed to commit transaction: " << err_msg << '\n';
+            sqlite3_free(err_msg);
+            return false;
+        }
+
+
+        int log_size, checkpointed;
+        int rc = sqlite3_wal_checkpoint_v2(
+            db_.get(),
+            nullptr,  // All databases
+            SQLITE_CHECKPOINT_FULL,  
+            &log_size,
+            &checkpointed
+        );
+
+        if (rc != SQLITE_OK) {
+            std::cerr << "[TicketManager] Warning: WAL checkpoint failed: " 
+                     << sqlite3_errmsg(db_.get()) << '\n';
+        } else {
+            std::cout << "[TicketManager] WAL checkpoint: " << checkpointed 
+                     << "/" << log_size << " frames checkpointed\n";
+        }
+
+        return true;
 }
 
-    std::string TicketManager::TimestampToString(const google::protobuf::Timestamp& ts)
+std::string TicketManager::TimestampToString(const google::protobuf::Timestamp& ts)
     {
         time_t seconds = ts.seconds();
         struct tm* tm_info = localtime(&seconds);
@@ -346,4 +308,3 @@ bool Session::validate_QR(std::string token)
         strftime(buffer, 26, "%Y-%m-%dT%H:%M:%S", tm_info);
         return std::string(buffer);
     }
-}

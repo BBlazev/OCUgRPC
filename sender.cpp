@@ -565,13 +565,13 @@ void Session::handle_QR(std::string token, int validator_id)
 bool Session::validate_QR(std::string token)
 {
     const char* sql = 
-        "SELECT token, valid_from, valid_to from tickets where Token = ?;";
+        "SELECT token, valid_from, valid_to from tickets where token = ?;";
 
     sqlite3_stmt* stmt;
 
     if(sqlite3_prepare_v2(db_.get(), sql, -1, &stmt, nullptr) != SQLITE_OK)
     {
-        std::cerr << "Failed to prepare query for validate_QR\n";
+        std::cerr << "Failed to prepare query for validate_QR: " << sqlite3_errmsg(db_.get()) << "\n";
         return false;
     }
 
@@ -596,12 +596,32 @@ bool Session::validate_QR(std::string token)
             if(time_from && time_to)
             {
                 is_valid = (now >= *time_from && now <= *time_to);
-                if(!is_valid) std::cout << "QR not valid for: " << token << '\n';
+                if(is_valid) 
+                {
+                    std::cout << "Ticket is VALID (within time range)\n";
+                }
+                else 
+                {
+                    std::cout << "Ticket EXPIRED or not yet valid\n";
+                }
+            }
+            else
+            {
+                std::cout << "Failed to parse times\n";
             }
         }
         else
         {
+            std::cout << "Ticket times are NULL - activating ticket\n";
+            
             sqlite3_finalize(stmt);
+            
+            char* err_msg = nullptr;
+            if (sqlite3_exec(db_.get(), "BEGIN IMMEDIATE;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
+                std::cerr << "Failed to begin transaction: " << err_msg << '\n';
+                sqlite3_free(err_msg);
+                return false;
+            }
             
             const char* update_sql = "UPDATE tickets SET valid_from = ?, valid_to = ? WHERE token = ?;";
             sqlite3_stmt* stmt_update;
@@ -609,6 +629,7 @@ bool Session::validate_QR(std::string token)
             if(sqlite3_prepare_v2(db_.get(), update_sql, -1, &stmt_update, nullptr) != SQLITE_OK)
             {
                 std::cout << "Failed to prepare activating ticket: " << sqlite3_errmsg(db_.get()) << '\n';
+                sqlite3_exec(db_.get(), "ROLLBACK;", nullptr, nullptr, nullptr);
                 return false;
             }
 
@@ -624,22 +645,52 @@ bool Session::validate_QR(std::string token)
             auto now = std::chrono::system_clock::now();
             auto expires = now + std::chrono::minutes(30);
                 
-            std::string valid_from_str = format_iso8601(now);
-            std::string valid_to_str = format_iso8601(expires);
+            std::string valid_from_new = format_iso8601(now);
+            std::string valid_to_new = format_iso8601(expires);
                 
-            sqlite3_bind_text(stmt_update, 1, valid_from_str.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(stmt_update, 2, valid_to_str.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt_update, 1, valid_from_new.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt_update, 2, valid_to_new.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_bind_text(stmt_update, 3, token.c_str(), -1, SQLITE_TRANSIENT);
 
             if(sqlite3_step(stmt_update) != SQLITE_DONE)
             {
-                std::cout << "Failed to insert/activate ticket: " << sqlite3_errmsg(db_.get()) << '\n';
+                std::cout << "Failed to activate ticket: " << sqlite3_errmsg(db_.get()) << '\n';
+                sqlite3_exec(db_.get(), "ROLLBACK;", nullptr, nullptr, nullptr);
                 return false;
             }
+            
+            // Commit transaction
+            if (sqlite3_exec(db_.get(), "COMMIT;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
+                std::cerr << "Failed to commit transaction: " << err_msg << '\n';
+                sqlite3_free(err_msg);
+                return false;
+            }
+            
+            int log_size, checkpointed;
+            int rc = sqlite3_wal_checkpoint_v2(
+                db_.get(),
+                nullptr,
+                SQLITE_CHECKPOINT_FULL,
+                &log_size,
+                &checkpointed
+            );
+            
+            if (rc != SQLITE_OK) {
+                std::cerr << "Warning: WAL checkpoint failed: " 
+                         << sqlite3_errmsg(db_.get()) << '\n';
+            } else {
+                std::cout << "WAL checkpoint: " << checkpointed 
+                         << "/" << log_size << " frames checkpointed\n";
+            }
+            
             std::cout << "Ticket ACTIVATED\n";
             do_write(R"({"status":"TICKET_ACTIVATED","isValid":true})");
             return true;
         }
+    }
+    else
+    {
+        std::cout << "Ticket NOT FOUND in database\n";
     }
     
     sqlite3_finalize(stmt);
@@ -657,6 +708,8 @@ bool Session::validate_QR(std::string token)
     
     return is_valid;
 }
+
+
 
 std::optional<std::chrono::system_clock::time_point>
     Session::parse_iso8601(std::string_view datetime_str)
