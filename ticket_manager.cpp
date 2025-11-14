@@ -298,6 +298,7 @@ bool TicketManager::InsertTicket(const Ticket& ticket)
         }
 
         return true;
+    }
 }
 
 std::string TicketManager::TimestampToString(const google::protobuf::Timestamp& ts)
