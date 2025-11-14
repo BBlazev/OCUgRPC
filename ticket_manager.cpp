@@ -192,7 +192,7 @@ namespace Tickets
     }
 
 
-bool TicketManager::InsertTicket(const Ticket& ticket)
+    bool TicketManager::InsertTicket(const Ticket& ticket)
     {
         char* err_msg = nullptr;
         if (sqlite3_exec(db_.get(), "BEGIN IMMEDIATE;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
@@ -299,9 +299,9 @@ bool TicketManager::InsertTicket(const Ticket& ticket)
 
         return true;
     }
-}
 
-std::string TicketManager::TimestampToString(const google::protobuf::Timestamp& ts)
+
+    std::string TicketManager::TimestampToString(const google::protobuf::Timestamp& ts)
     {
         time_t seconds = ts.seconds();
         struct tm* tm_info = localtime(&seconds);
@@ -309,3 +309,4 @@ std::string TicketManager::TimestampToString(const google::protobuf::Timestamp& 
         strftime(buffer, 26, "%Y-%m-%dT%H:%M:%S", tm_info);
         return std::string(buffer);
     }
+}
