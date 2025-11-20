@@ -57,7 +57,7 @@ int main(int argc, char* argv[]) {
         std::cout << "Database opened\n\n";
 
         if (command == "server") {
-            // Parse command line arguments
+
             int tcp_port = (argc >= 3) ? std::stoi(argv[2]) : config::DEFAULT_TCP_PORT;
             std::string grpc_server = (argc >= 4) ? argv[3] : std::string(config::GRPC_TICKET_SERVER);
             
@@ -66,27 +66,22 @@ int main(int argc, char* argv[]) {
             std::cout << "gRPC Server (for tickets): " << grpc_server << "\n";
             std::cout << "============================\n\n";
             
-            // Create and start ticket manager (gRPC client)
             std::cout << "[MAIN] Starting Ticket Manager (gRPC client)...\n";
             Tickets::TicketManager ticket_manager(db, grpc_server);
             g_ticket_manager = &ticket_manager;
             ticket_manager.Start();
             
-            // Small delay to let gRPC client initialize
             std::this_thread::sleep_for(std::chrono::seconds(1));
             
-            // Create and start TCP server for validators
             std::cout << "[MAIN] Starting TCP Server for validators...\n";
             Sender sender(db, tcp_port);
             g_sender = &sender;
             
-            // Set signal handlers
             std::signal(SIGINT, signal_handler);
             std::signal(SIGTERM, signal_handler);
             
             g_running = true;
             
-            // Run TCP server in a separate thread so we can handle shutdown
             std::thread sender_thread([&sender]() {
                 sender.run();
             });

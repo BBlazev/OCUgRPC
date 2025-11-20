@@ -144,7 +144,7 @@ jobs:
           ninja
           ninja install
           
-          echo "✓ gRPC build complete for ${{ matrix.arch }}"
+          echo "gRPC build complete for ${{ matrix.arch }}"
           echo "Installed libraries:"
           ls -lh ${{ github.workspace }}/grpc-install-${{ matrix.arch }}/lib/ | head -40
           
@@ -304,7 +304,7 @@ jobs:
           
           ${{ matrix.cross_compile }}-strip ${{ env.OUTPUT_BINARY }}-${{ matrix.arch }}
           
-          echo "✓ Build complete!"
+          echo "Build complete!"
           
           echo "Binary information:"
           file ${{ env.OUTPUT_BINARY }}-${{ matrix.arch }}

@@ -407,6 +407,7 @@ void Session::handle_card_validation(std::string_view card_number)
         std::cout << "Card valid: " << card_number 
                  << " Coupon ID: " << *coupon_id << "\n";
         do_write(std::to_string(*coupon_id));
+        handle_insert_validation(card_number, coupon_id);
     } else {
         std::cout << "Card invalid: " << card_number << "\n";
         do_write("0");
@@ -751,23 +752,69 @@ std::string Session::format_iso8601(const std::chrono::system_clock::time_point&
     return std::string(buffer);
 }
 
-bool Session::handle_QR_activation(std::string token)
+void Session::handle_insert_validation(std::string_view card_number,std::optional<int> coupon_id)
 {
-    // pogledaj da li je aktivirano
-    const char* sql =
-    "SELECT active from tickets where Token = ?;";
+    std::string card_num(card_number);
+
+    char* err_msg = nullptr;
+    if(sqlite3_exec(db_.get(), "BEGIN IMMEDIATE;", nullptr, nullptr, &err_msg) != SQLITE_OK)
+    {
+        std::cerr << "[handle_insert_validation] Failed to begin transaction: " << err_msg << '\n';
+        sqlite3_free(err_msg);
+        return;
+    }
+
+
+    const char* sql = "INSERT INTO card_validated (card_id, valid) values (?,?);";
 
     sqlite3_stmt* stmt;
 
-    if(sqlite3_prepare_v2(db_.get(),sql, -1, &stmt, nullptr) != SQLITE_OK)
+    if(sqlite3_prepare_v2(db_.get(), sql, -1, &stmt, nullptr) != SQLITE_OK)
     {
-        std::cout << "Failed to prepare QR activation ";
+        std::cerr << "[handle_insert_validation] Failed to prepare statement: " << sqlite3_errmsg(db_.get());
+        sqlite3_exec(db_.get(), "ROLLBACK;", nullptr, nullptr, nullptr);
+        return;
     }
-    
 
+    sqlite3_bind_text(stmt, 1, card_num.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 2, 1);
 
-    // ako nije aktiviraj
+    if(sqlite3_step(stmt) != SQLITE_DONE)
+    {
+        std::cerr << "[handle_insert_validation] Failed to insert card validation: " 
+            << sqlite3_errmsg(db_.get()) << '\n';
+        sqlite3_exec(db_.get(), "ROLLBACK;", nullptr, nullptr, nullptr);
+        return;
+    }
 
-    
-    
+    if (sqlite3_exec(db_.get(), "COMMIT;", nullptr, nullptr, &err_msg) != SQLITE_OK) 
+    {
+        std::cerr << "[handle_insert_validation] Failed to commit card validation: " << err_msg << '\n';
+        sqlite3_free(err_msg);
+        return;
+    }
+
+    int log_size, checkpointed;
+    int rc = sqlite3_wal_checkpoint_v2(
+        db_.get(),
+        nullptr,  // All databases
+        SQLITE_CHECKPOINT_FULL,  
+        &log_size,
+        &checkpointed
+    );
+
+    if (rc != SQLITE_OK) 
+    {
+        std::cerr << "[handle_insert_validation] Warning: WAL checkpoint failed: " 
+                    << sqlite3_errmsg(db_.get()) << '\n';
+    } 
+    else 
+    {
+        std::cout << "[handle_insert_validation] WAL checkpoint: " << checkpointed 
+                    << "/" << log_size << " frames checkpointed\n";
+    }
+
+    std::cout << "[DEBUG] Inserted card validation for " << card_num << '\n';
+    return;
+
 }

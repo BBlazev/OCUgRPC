@@ -60,7 +60,7 @@ namespace Articles
 
                 article.article_id = item.contains("id") && item["id"].is_number() ? item["id"].get<int>() : 0;
                 article.name = item.contains("name") && item["name"].is_string() ? item["name"].get<std::string>() : "";
-                article.price = item.contains("price") && item["price"].is_number() ? item["price"].get<int>() : 0;
+                article.price = item.contains("price") && item["price"].is_number() ? item["price"].get<double>() : 0; //TODO get<double>() : 0;
 
                 if(insert_article(article))
                     inserted++;

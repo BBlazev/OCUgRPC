@@ -82,12 +82,10 @@ namespace Tickets
                 
                 stub_ = vehicle::TicketSync::NewStub(channel_);
                 
-                // Create request (empty, matching Python version)
                 vehicle::SubscribeForNewTicketsRequest request;
                 
                 std::cout << "[TicketManager] Connected. Waiting for new tickets...\n";
                 
-                // Start streaming - store context so Stop() can cancel it
                 grpc::ClientContext context;
                 {
                     std::lock_guard<std::mutex> lock(context_mutex_);
